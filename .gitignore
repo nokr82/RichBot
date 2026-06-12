@@ -1,0 +1,30 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.db
+*.db-shm
+*.db-wal
+.env
+
+# Alembic
+alembic/versions/*.py
+
+# Node
+node_modules/
+.next/
+.vercel/
+*.log
+npm-debug.log*
+.env.local
+.env*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Generated ticker cache
+backend/data/
+
