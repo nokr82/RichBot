@@ -43,7 +43,8 @@ async def live_chart(
             date=idx.to_pydatetime() if hasattr(idx, "to_pydatetime") else idx,
             open=sf(row.get("open")), high=sf(row.get("high")),
             low=sf(row.get("low")), close=float(row["close"]), volume=int(row["volume"]),
-            ma5=sf(row.get("ma5")), ma20=sf(row.get("ma20")), ma60=sf(row.get("ma60")),
+            ma20=sf(row.get("ma20")), ma50=sf(row.get("ma50")), ma60=sf(row.get("ma60")),
+            ma120=sf(row.get("ma120")), ma200=sf(row.get("ma200")), ma240=sf(row.get("ma240")),
             volume_ratio=sf(row.get("volume_ratio")),
         ))
     return rows

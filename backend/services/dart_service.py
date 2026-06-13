@@ -12,8 +12,8 @@ logger = logging.getLogger(__name__)
 DART_BASE = "https://opendart.fss.or.kr/api"
 
 
-async def fetch_watchlist_disclosures(db: AsyncSession):
-    """Fetch last 7 days of disclosures for all watchlist stocks."""
+async def fetch_watchlist_disclosures(db: AsyncSession, days: int = 30):
+    """Fetch recent disclosures (all types) for all watchlist stocks."""
     if not settings.dart_api_key:
         logger.warning("DART API key not configured, skipping disclosure fetch")
         return
@@ -22,31 +22,36 @@ async def fetch_watchlist_disclosures(db: AsyncSession):
     stocks = stocks_res.scalars().all()
 
     end_date = date.today()
-    start_date = end_date - timedelta(days=7)
+    start_date = end_date - timedelta(days=days)
 
     async with httpx.AsyncClient(timeout=30) as client:
         for stock in stocks:
             try:
                 corp_code = await _get_corp_code(client, stock.ticker)
                 if not corp_code:
+                    logger.warning("corp_code 조회 실패: %s", stock.ticker)
                     continue
 
+                # pblntf_ty 미지정 → 전체 공시 유형(정기·주요사항·발행·지분·기타) 조회
                 resp = await client.get(f"{DART_BASE}/list.json", params={
                     "crtfc_key": settings.dart_api_key,
                     "corp_code": corp_code,
                     "bgn_de": start_date.strftime("%Y%m%d"),
                     "end_de": end_date.strftime("%Y%m%d"),
-                    "pblntf_ty": "A",  # 정기공시
-                    "page_count": 10,
+                    "page_count": 20,
                 })
                 if resp.status_code != 200:
+                    logger.warning("DART list 응답 오류 %s: %s", stock.ticker, resp.status_code)
                     continue
 
                 data = resp.json()
                 if data.get("status") != "000":
+                    logger.info("DART list 상태 %s (종목 %s): %s",
+                                data.get("status"), stock.ticker, data.get("message", ""))
                     continue
 
-                for item in data.get("list", []):
+                items = data.get("list", [])
+                for item in items:
                     rcept_dt = _parse_date(item.get("rcept_dt", ""))
                     if not rcept_dt:
                         continue
@@ -59,6 +64,8 @@ async def fetch_watchlist_disclosures(db: AsyncSession):
                         raw_url=f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={item['rcept_no']}",
                     ).on_conflict_do_nothing(index_elements=["dart_rcept_no"])
                     await db.execute(stmt)
+
+                logger.info("DART 공시 수집: %s → %d건", stock.ticker, len(items))
 
             except Exception as exc:
                 logger.error("DART fetch error for %s: %s", stock.ticker, exc)

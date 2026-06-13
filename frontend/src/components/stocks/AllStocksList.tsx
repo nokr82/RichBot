@@ -1,9 +1,10 @@
 ﻿"use client";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/api";
 import PriceChart from "@/components/charts/PriceChart";
 import { formatKRW } from "@/lib/formatters";
+import { useStocks, useAddStock, useDeleteStock } from "@/hooks/useWatchlist";
 import type { StockSearchResult, PriceSnapshot } from "@/types";
 
 interface AllStocksResponse {
@@ -16,7 +17,6 @@ export default function AllStocksList() {
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<StockSearchResult | null>(null);
-  const qc = useQueryClient();
   const SIZE = 50;
 
   const { data, isLoading } = useQuery<AllStocksResponse>({
@@ -26,10 +26,15 @@ export default function AllStocksList() {
     staleTime: 5 * 60_000,
   });
 
-  const addMutation = useMutation({
-    mutationFn: (s: StockSearchResult) => api.post("/api/stocks", s).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["stocks"] }),
-  });
+  // 관심종목 Set — 실시간으로 버튼 상태에 반영됨
+  const { data: watchlist = [] } = useStocks();
+  const watchlistSet = useMemo(
+    () => new Set(watchlist.map((s) => s.ticker)),
+    [watchlist]
+  );
+
+  const addMutation = useAddStock();
+  const deleteMutation = useDeleteStock();
 
   const handleSearch = useCallback((v: string) => {
     setQuery(v);
@@ -75,34 +80,53 @@ export default function AllStocksList() {
             </p>
           ) : (
             <div className="space-y-1">
-              {items.map((s) => (
-                <div
-                  key={s.ticker}
-                  onClick={() => setSelected(selected?.ticker === s.ticker ? null : s)}
-                  className={`flex items-center justify-between px-4 py-3 rounded-xl cursor-pointer transition-colors ${
-                    selected?.ticker === s.ticker
-                      ? "bg-blue-700/30 border border-blue-600"
-                      : "bg-gray-800 hover:bg-gray-700"
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <div>
-                      <span className="text-white font-medium">{s.name}</span>
-                      <span className="ml-2 text-gray-400 text-sm">{s.ticker}</span>
-                    </div>
-                    <span className="text-xs text-blue-400 bg-blue-900/40 px-1.5 py-0.5 rounded">
-                      {s.market}
-                    </span>
-                  </div>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); addMutation.mutate(s); }}
-                    disabled={addMutation.isPending}
-                    className="text-xs bg-gray-600 hover:bg-blue-600 text-white px-3 py-1 rounded-lg transition-colors"
+              {items.map((s) => {
+                const inWatchlist = watchlistSet.has(s.ticker);
+                const isPending =
+                  (addMutation.isPending && (addMutation.variables as StockSearchResult)?.ticker === s.ticker) ||
+                  (deleteMutation.isPending && deleteMutation.variables === s.ticker);
+                return (
+                  <div
+                    key={s.ticker}
+                    onClick={() => setSelected(selected?.ticker === s.ticker ? null : s)}
+                    className={`flex items-center justify-between px-4 py-3 rounded-xl cursor-pointer transition-colors ${
+                      selected?.ticker === s.ticker
+                        ? "bg-blue-700/30 border border-blue-600"
+                        : "bg-gray-800 hover:bg-gray-700"
+                    }`}
                   >
-                    + 관심
-                  </button>
-                </div>
-              ))}
+                    <div className="flex items-center gap-3">
+                      <div>
+                        <span className="text-white font-medium">{s.name}</span>
+                        <span className="ml-2 text-gray-400 text-sm">{s.ticker}</span>
+                      </div>
+                      <span className="text-xs text-blue-400 bg-blue-900/40 px-1.5 py-0.5 rounded">
+                        {s.market}
+                      </span>
+                      {inWatchlist && (
+                        <span className="text-xs text-emerald-400 bg-emerald-900/30 px-1.5 py-0.5 rounded-full">
+                          관심
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (inWatchlist) deleteMutation.mutate(s.ticker);
+                        else addMutation.mutate(s);
+                      }}
+                      disabled={isPending}
+                      className={`text-xs px-3 py-1 rounded-lg transition-colors font-medium disabled:opacity-50 ${
+                        inWatchlist
+                          ? "bg-emerald-700 hover:bg-red-700 text-white"
+                          : "bg-gray-600 hover:bg-blue-600 text-white"
+                      }`}
+                    >
+                      {isPending ? "..." : inWatchlist ? "− 관심" : "+ 관심"}
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           )}
 
@@ -131,7 +155,11 @@ export default function AllStocksList() {
         {/* 상세 차트 패널 */}
         {selected && (
           <div className="w-full max-w-lg flex-shrink-0">
-            <StockDetailPanel stock={selected} onClose={() => setSelected(null)} />
+            <StockDetailPanel
+              stock={selected}
+              inWatchlist={watchlistSet.has(selected.ticker)}
+              onClose={() => setSelected(null)}
+            />
           </div>
         )}
       </div>
@@ -141,12 +169,15 @@ export default function AllStocksList() {
 
 function StockDetailPanel({
   stock,
+  inWatchlist,
   onClose,
 }: {
   stock: StockSearchResult;
+  inWatchlist: boolean;
   onClose: () => void;
 }) {
-  const qc = useQueryClient();
+  const addMutation = useAddStock();
+  const deleteMutation = useDeleteStock();
 
   const { data: history = [], isLoading } = useQuery<PriceSnapshot[]>({
     queryKey: ["live-chart", stock.ticker],
@@ -155,11 +186,7 @@ function StockDetailPanel({
     staleTime: 15 * 60_000,
   });
 
-  const addMutation = useMutation({
-    mutationFn: () => api.post("/api/stocks", stock).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["stocks"] }),
-  });
-
+  const isPending = addMutation.isPending || deleteMutation.isPending;
   const latest = history.at(-1);
 
   return (
@@ -174,11 +201,18 @@ function StockDetailPanel({
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => addMutation.mutate()}
-            disabled={addMutation.isPending || addMutation.isSuccess}
-            className="text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg"
+            onClick={() => {
+              if (inWatchlist) deleteMutation.mutate(stock.ticker);
+              else addMutation.mutate(stock);
+            }}
+            disabled={isPending}
+            className={`text-sm px-3 py-1.5 rounded-lg font-medium transition-colors disabled:opacity-50 ${
+              inWatchlist
+                ? "bg-emerald-700 hover:bg-red-700 text-white"
+                : "bg-blue-600 hover:bg-blue-500 text-white"
+            }`}
           >
-            {addMutation.isSuccess ? "추가됨 ✓" : "+ 관심종목"}
+            {isPending ? "..." : inWatchlist ? "− 관심종목" : "+ 관심종목"}
           </button>
           <button onClick={onClose} className="text-gray-400 hover:text-white text-xl leading-none">&times;</button>
         </div>
@@ -253,4 +287,3 @@ function LivePriceChart({ history }: { history: PriceSnapshot[] }) {
     </ResponsiveContainer>
   );
 }
-

@@ -9,8 +9,16 @@ from schemas.disclosure import DisclosureOut
 router = APIRouter(prefix="/api/disclosures", tags=["disclosures"])
 
 
+@router.post("/refresh")
+async def refresh_disclosures(db: AsyncSession = Depends(get_db)):
+    """관심종목 공시를 즉시 수집합니다 (스케줄러 대기 없이)."""
+    from services.dart_service import fetch_watchlist_disclosures
+    await fetch_watchlist_disclosures(db)
+    return {"ok": True}
+
+
 @router.get("", response_model=list[DisclosureOut])
-async def list_disclosures(ticker: str | None = None, days: int = 7, db: AsyncSession = Depends(get_db)):
+async def list_disclosures(ticker: str | None = None, days: int = 30, db: AsyncSession = Depends(get_db)):
     from datetime import date, timedelta
     since = date.today() - timedelta(days=days)
     query = select(Disclosure).where(Disclosure.rcept_dt >= since).order_by(Disclosure.rcept_dt.desc())

@@ -1,9 +1,8 @@
 ﻿"use client";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { useStocks, useDeleteStock } from "@/hooks/useWatchlist";
 import StockSearchModal from "./StockSearchModal";
-import PriceChart from "@/components/charts/PriceChart";
-import AICommentaryCard from "@/components/ai/AICommentaryCard";
 import AlertSettingsPanel from "@/components/alerts/AlertSettingsPanel";
 import { formatKRW, formatVolume } from "@/lib/formatters";
 import type { Stock } from "@/types";
@@ -12,7 +11,6 @@ export default function WatchlistTable() {
   const { data: stocks = [], isLoading } = useStocks();
   const deleteMutation = useDeleteStock();
   const [showModal, setShowModal] = useState(false);
-  const [expanded, setExpanded] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState<string | null>(null);
 
   if (isLoading) return <div className="text-gray-400 p-8 text-center">로딩 중...</div>;
@@ -40,9 +38,7 @@ export default function WatchlistTable() {
             <StockRow
               key={stock.ticker}
               stock={stock}
-              expanded={expanded === stock.ticker}
               showSettings={showSettings === stock.ticker}
-              onExpand={() => setExpanded(expanded === stock.ticker ? null : stock.ticker)}
               onToggleSettings={() =>
                 setShowSettings(showSettings === stock.ticker ? null : stock.ticker)
               }
@@ -58,21 +54,21 @@ export default function WatchlistTable() {
 }
 
 function StockRow({
-  stock, expanded, showSettings, onExpand, onToggleSettings, onDelete,
+  stock, showSettings, onToggleSettings, onDelete,
 }: {
   stock: Stock;
-  expanded: boolean;
   showSettings: boolean;
-  onExpand: () => void;
   onToggleSettings: () => void;
   onDelete: () => void;
 }) {
+  const router = useRouter();
   const p = stock.latest_price;
+
   return (
     <div className="bg-gray-800 rounded-xl overflow-hidden">
       <div
         className="flex items-center px-4 py-3 cursor-pointer hover:bg-gray-750 gap-4"
-        onClick={onExpand}
+        onClick={() => router.push(`/stocks/${stock.ticker}`)}
       >
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
@@ -115,14 +111,12 @@ function StockRow({
         >
           삭제
         </button>
-        <span className="text-gray-500">{expanded ? "▲" : "▼"}</span>
+        <span className="text-gray-400 text-lg">›</span>
       </div>
 
-      {expanded && (
-        <div className="border-t border-gray-700 p-4 space-y-4">
-          <PriceChart ticker={stock.ticker} />
-          {showSettings && <AlertSettingsPanel ticker={stock.ticker} />}
-          <AICommentaryCard ticker={stock.ticker} stockName={stock.name} />
+      {showSettings && (
+        <div className="border-t border-gray-700 p-4">
+          <AlertSettingsPanel ticker={stock.ticker} />
         </div>
       )}
     </div>
