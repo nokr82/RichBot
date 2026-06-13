@@ -28,6 +28,15 @@ export function useAddStock() {
   });
 }
 
+export function useStockInfo(ticker: string) {
+  return useQuery<StockSearchResult>({
+    queryKey: ["stock-info", ticker],
+    queryFn: () => api.get(`/api/stocks/info/${ticker}`).then((r) => r.data),
+    enabled: !!ticker,
+    staleTime: 24 * 60 * 60 * 1000, // 캐시 1일
+  });
+}
+
 export function useDeleteStock() {
   const qc = useQueryClient();
   return useMutation({

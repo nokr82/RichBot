@@ -22,6 +22,11 @@ _MARKET_ID_MAP = {"STK": "KOSPI", "KSQ": "KOSDAQ", "KNX": "KONEX"}
 # Public API
 # ---------------------------------------------------------------------------
 
+def get_all_tickers() -> list[dict]:
+    """캐시에서 전체 종목 목록 반환. {ticker, name, market} 형태."""
+    return _get_cache() or []
+
+
 def search_stocks(query: str, page: int = 1, size: int = 50) -> dict:
     all_stocks = _get_cache()
     if not all_stocks:

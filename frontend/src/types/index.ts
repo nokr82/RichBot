@@ -27,6 +27,9 @@ export interface PriceSnapshot {
 export interface CrossEvent {
   id: number;
   stock_id: number;
+  stock_name?: string | null;
+  ticker?: string | null;
+  market?: string | null;
   event_type: string;
   short_ma: string;
   long_ma: string;
@@ -39,6 +42,9 @@ export interface CrossEvent {
 export interface VolumeSpikeEvent {
   id: number;
   stock_id: number;
+  stock_name?: string | null;
+  ticker?: string | null;
+  market?: string | null;
   date: string;
   current_volume?: number | null;
   avg_volume_20?: number | null;
@@ -76,6 +82,13 @@ export interface Disclosure {
   raw_url?: string | null;
   summary?: string | null;
   summary_at?: string | null;
+}
+
+export interface GlobalAlertSetting {
+  scan_all_stocks: boolean;
+  enabled_pairs: string[];
+  volume_spike: boolean;
+  volume_threshold: number;
 }
 
 export interface AiCommentary {

@@ -49,3 +49,14 @@ class AlertSetting(Base):
     push_notify = Column(Boolean, default=True)
 
     stock = relationship("Stock", back_populates="alert_setting")
+
+
+class GlobalAlertSetting(Base):
+    """단일 행(id=1) 전역 알림 설정."""
+    __tablename__ = "global_alert_settings"
+
+    id = Column(Integer, primary_key=True, default=1)
+    scan_all_stocks = Column(Boolean, default=False)
+    enabled_pairs = Column(JSON, default=lambda: ["20_60"])
+    volume_spike = Column(Boolean, default=False)
+    volume_threshold = Column(Float, default=3.0)

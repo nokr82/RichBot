@@ -19,6 +19,16 @@ async def search(q: str):
     return result["items"]
 
 
+@router.get("/info/{ticker}", response_model=StockSearchResult)
+async def stock_info(ticker: str):
+    """캐시에서 단일 종목 정보 조회 (관심종목 여부 무관)."""
+    result = search_stocks(ticker, page=1, size=20)
+    for item in result["items"]:
+        if item["ticker"] == ticker:
+            return item
+    raise HTTPException(status_code=404, detail="Stock not found")
+
+
 @router.get("/all")
 async def all_stocks(q: str = "", page: int = 1, size: int = 50):
     return search_stocks(q, page=page, size=size)

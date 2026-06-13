@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     await init_db()
     ensure_cache_built()  # 전체 종목 캐시 백그라운드 빌드
-    scheduler.add_job(fetch_prices_job, "interval", minutes=15, id="fetch_prices", replace_existing=True)
+    scheduler.add_job(fetch_prices_job, "cron", hour=16, minute=0, day_of_week="mon-fri", id="fetch_prices", replace_existing=True)
     scheduler.add_job(fetch_disclosures_job, "cron", hour=18, minute=0, id="fetch_disclosures", replace_existing=True)
     scheduler.start()
     logger.info("Scheduler started")

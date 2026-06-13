@@ -1,7 +1,7 @@
 ﻿"use client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/api";
-import type { AlertsResponse, Notification, AlertSetting } from "@/types";
+import type { AlertsResponse, Notification, AlertSetting, GlobalAlertSetting } from "@/types";
 
 export function useAlerts(page = 1) {
   return useQuery<AlertsResponse>({
@@ -52,6 +52,34 @@ export function useUpdateAlertSettings(ticker: string) {
       api.put(`/api/alerts/settings/${ticker}`, payload).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["alert-settings", ticker] });
+    },
+  });
+}
+
+export function useManualScan() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post("/api/alerts/scan").then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["alerts"] });
+    },
+  });
+}
+
+export function useGlobalAlertSetting() {
+  return useQuery<GlobalAlertSetting>({
+    queryKey: ["global-alert-setting"],
+    queryFn: () => api.get("/api/alerts/global-settings").then((r) => r.data),
+  });
+}
+
+export function useUpdateGlobalAlertSetting() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: Partial<GlobalAlertSetting>) =>
+      api.put("/api/alerts/global-settings", payload).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["global-alert-setting"] });
     },
   });
 }

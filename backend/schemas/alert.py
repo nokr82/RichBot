@@ -6,6 +6,9 @@ from pydantic import BaseModel
 class CrossEventOut(BaseModel):
     id: int
     stock_id: int
+    stock_name: Optional[str] = None
+    ticker: Optional[str] = None
+    market: Optional[str] = None
     event_type: str
     short_ma: str
     long_ma: str
@@ -20,6 +23,9 @@ class CrossEventOut(BaseModel):
 class VolumeSpikeEventOut(BaseModel):
     id: int
     stock_id: int
+    stock_name: Optional[str] = None
+    ticker: Optional[str] = None
+    market: Optional[str] = None
     date: date
     current_volume: Optional[int] = None
     avg_volume_20: Optional[int] = None
@@ -46,3 +52,19 @@ class AlertSettingUpdate(BaseModel):
     volume_spike: Optional[bool] = None
     volume_threshold: Optional[float] = None
     push_notify: Optional[bool] = None
+
+
+class GlobalAlertSettingOut(BaseModel):
+    scan_all_stocks: bool
+    enabled_pairs: list[str]
+    volume_spike: bool
+    volume_threshold: float
+
+    model_config = {"from_attributes": True}
+
+
+class GlobalAlertSettingUpdate(BaseModel):
+    scan_all_stocks: Optional[bool] = None
+    enabled_pairs: Optional[list[str]] = None
+    volume_spike: Optional[bool] = None
+    volume_threshold: Optional[float] = None
