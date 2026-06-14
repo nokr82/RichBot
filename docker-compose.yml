@@ -1,0 +1,32 @@
+﻿services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=sqlite+aiosqlite:////data/richbot.db
+      - DART_API_KEY=${DART_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY}
+      - VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY}
+      - VAPID_ADMIN_EMAIL=${VAPID_ADMIN_EMAIL:-admin@richbot.local}
+      - SCHEDULER_INTERVAL_MINUTES=${SCHEDULER_INTERVAL_MINUTES:-15}
+    volumes:
+      - richbot_db:/data
+      - ./backend/data:/app/data
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+        NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  richbot_db:
