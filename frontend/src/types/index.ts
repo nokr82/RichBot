@@ -110,3 +110,76 @@ export interface AlertsResponse {
   cross_events: CrossEvent[];
   volume_spikes: VolumeSpikeEvent[];
 }
+
+// ── 코인 타입 ──────────────────────────────────────────────────────────────
+
+export interface CoinPriceSnapshot {
+  date: string;
+  open?: number | null;
+  high?: number | null;
+  low?: number | null;
+  close: number;
+  volume: number;
+  ma7?: number | null;
+  ma20?: number | null;
+  ma25?: number | null;
+  ma50?: number | null;
+  ma99?: number | null;
+  ma200?: number | null;
+  volume_ratio?: number | null;
+}
+
+export interface Coin {
+  id: number;
+  ticker: string;
+  name: string;
+  is_active: boolean;
+  added_at: string;
+  latest_price?: CoinPriceSnapshot | null;
+}
+
+export interface CoinSearchResult {
+  ticker: string;
+  name: string;
+}
+
+export interface CoinCrossEvent {
+  id: number;
+  coin_id: number;
+  coin_name?: string | null;
+  ticker?: string | null;
+  event_type: string;
+  short_ma: string;
+  long_ma: string;
+  short_val: number;
+  long_val: number;
+  occurred_at: string;
+  notified: boolean;
+}
+
+export interface CoinVolumeSpikeEvent {
+  id: number;
+  coin_id: number;
+  coin_name?: string | null;
+  ticker?: string | null;
+  date: string;
+  current_volume?: number | null;
+  avg_volume_20?: number | null;
+  ratio: number;
+  threshold: number;
+  notified: boolean;
+  occurred_at: string;
+}
+
+export interface CoinAlertSetting {
+  coin_id: number;
+  enabled_pairs: string[];
+  volume_spike: boolean;
+  volume_threshold: number;
+  push_notify: boolean;
+}
+
+export interface CoinAlertsResponse {
+  cross_events: CoinCrossEvent[];
+  volume_spikes: CoinVolumeSpikeEvent[];
+}

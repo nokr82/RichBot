@@ -5,6 +5,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 개발 명령어
 
 ### 백엔드 (`backend/` 디렉토리에서 실행)
+# 터미널명령어
+cd d:\개발소스\RichBot\backend
+.\.venv\Scripts\uvicorn.exe main:app --reload --port 8000
+
 ```powershell
 .\.venv\Scripts\uvicorn.exe main:app --reload --port 8000   # 핫리로드 개발 서버
 .\.venv\Scripts\python -m py_compile main.py                 # 특정 파일 문법 검사

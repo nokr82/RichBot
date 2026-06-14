@@ -7,12 +7,21 @@ from sqlalchemy import select
 from database import AsyncSessionLocal
 from models.stock import Stock
 from models.alert import CrossEvent, VolumeSpikeEvent, GlobalAlertSetting
+from models.coin import Coin, CoinCrossEvent, CoinVolumeSpikeEvent, CoinAlertSetting
 from services.stock_data import fetch_ohlcv, get_all_tickers
 from services.indicators import compute_indicators, detect_crosses, detect_volume_spike
+from services.coin_data import fetch_coin_ohlcv, get_all_coins
+from services.coin_indicators import compute_coin_indicators, detect_coin_crosses, detect_coin_volume_spike
 from services.alert_engine import process_new_events
 
 logger = logging.getLogger(__name__)
 
+_COIN_DEFAULT_PAIRS    = ["7_25", "7_99", "25_99", "50_200"]
+_COIN_DEFAULT_VOL      = True
+_COIN_DEFAULT_THRESH   = 2.0
+
+
+# ── 주식 스케줄 작업 ─────────────────────────────────────────────────────────
 
 async def fetch_prices_job():
     """일봉 마감 후 실행: 전체 KRX 종목 크로스/거래량 급증 감지."""
@@ -24,8 +33,8 @@ async def fetch_prices_job():
             db.add(gs)
             await db.commit()
             await db.refresh(gs)
-        enabled_pairs   = gs.enabled_pairs or ["20_60"]
-        volume_enabled  = gs.volume_spike
+        enabled_pairs    = gs.enabled_pairs or ["20_60"]
+        volume_enabled   = gs.volume_spike
         volume_threshold = gs.volume_threshold
 
     all_tickers = await asyncio.to_thread(get_all_tickers)
@@ -133,6 +142,161 @@ async def fetch_disclosures_job():
     async with AsyncSessionLocal() as db:
         from services.dart_service import fetch_watchlist_disclosures
         await fetch_watchlist_disclosures(db)
+
+
+# ── 코인 스케줄 작업 ────────────────────────────────────────────────────────
+
+async def fetch_coin_prices_job():
+    """매 시간 정각: 전체 업비트 KRW 코인 크로스/거래량 급증 감지 (주식과 동일 방식)."""
+    all_coin_info = await get_all_coins()
+    if not all_coin_info:
+        logger.warning("업비트 코인 목록 없음 — 캐시 갱신 실패")
+        return
+
+    logger.info("전체코인 스캔 시작: %d개", len(all_coin_info))
+    semaphore = asyncio.Semaphore(4)
+    tasks = [_scan_coin_ticker(info, semaphore) for info in all_coin_info]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    errs = sum(1 for r in results if isinstance(r, Exception))
+    if errs:
+        logger.warning("코인 스캔 오류 %d건", errs)
+
+    async with AsyncSessionLocal() as db:
+        await _process_coin_events(db)
+
+
+async def _scan_coin_ticker(coin_info: dict, semaphore: asyncio.Semaphore):
+    """전체 업비트 코인 1개 스캔. 관심목록 코인은 개별 설정 사용, 나머지는 기본값."""
+    async with semaphore:
+        ticker = coin_info["ticker"]
+        name   = coin_info.get("name", ticker)
+        try:
+            df = await fetch_coin_ohlcv(ticker, 400)
+            if df.empty:
+                return
+            df = compute_coin_indicators(df)
+
+            # 관심목록에 있으면 개별 설정 사용, 없으면 기본값
+            async with AsyncSessionLocal() as db:
+                coin_res = await db.execute(select(Coin).where(Coin.ticker == ticker))
+                coin = coin_res.scalar_one_or_none()
+                if coin:
+                    setting_res = await db.execute(
+                        select(CoinAlertSetting).where(CoinAlertSetting.coin_id == coin.id)
+                    )
+                    s = setting_res.scalar_one_or_none()
+                    enabled_pairs    = s.enabled_pairs    if s else _COIN_DEFAULT_PAIRS
+                    volume_enabled   = s.volume_spike     if s else _COIN_DEFAULT_VOL
+                    volume_threshold = s.volume_threshold if s else _COIN_DEFAULT_THRESH
+                else:
+                    enabled_pairs    = _COIN_DEFAULT_PAIRS
+                    volume_enabled   = _COIN_DEFAULT_VOL
+                    volume_threshold = _COIN_DEFAULT_THRESH
+
+            crosses = detect_coin_crosses(df, enabled_pairs, lookback=30)
+            spike   = volume_enabled and detect_coin_volume_spike(df, volume_threshold)
+
+            if not crosses and not spike:
+                return
+
+            from datetime import date as _date
+            today = _date.today()
+
+            async with AsyncSessionLocal() as db:
+                # DB에 없으면 is_active=False 레코드 생성 (주식의 _scan_ticker 패턴과 동일)
+                coin_res = await db.execute(select(Coin).where(Coin.ticker == ticker))
+                coin = coin_res.scalar_one_or_none()
+                if not coin:
+                    coin = Coin(ticker=ticker, name=name, is_active=False)
+                    db.add(coin)
+                    await db.flush()
+
+                for ce in crosses:
+                    existing = await db.execute(
+                        select(CoinCrossEvent).where(
+                            CoinCrossEvent.coin_id == coin.id,
+                            CoinCrossEvent.event_type == ce.event_type,
+                            CoinCrossEvent.occurred_at >= datetime.combine(
+                                ce.occurred_date, datetime.min.time()
+                            ),
+                        )
+                    )
+                    if existing.scalar_one_or_none() is None:
+                        db.add(CoinCrossEvent(
+                            coin_id=coin.id,
+                            event_type=ce.event_type,
+                            short_ma=ce.short_ma,
+                            long_ma=ce.long_ma,
+                            short_val=ce.short_val,
+                            long_val=ce.long_val,
+                            occurred_at=datetime.combine(ce.occurred_date, datetime.now().time()),
+                        ))
+
+                if spike:
+                    existing_spike = await db.execute(
+                        select(CoinVolumeSpikeEvent).where(
+                            CoinVolumeSpikeEvent.coin_id == coin.id,
+                            CoinVolumeSpikeEvent.date == today,
+                        )
+                    )
+                    if existing_spike.scalar_one_or_none() is None:
+                        curr = df.iloc[-1]
+                        db.add(CoinVolumeSpikeEvent(
+                            coin_id=coin.id,
+                            date=today,
+                            current_volume=float(curr["volume"]),
+                            avg_volume_20=_sf(curr.get("vol_avg20")),
+                            ratio=float(curr["volume_ratio"]),
+                            threshold=volume_threshold,
+                        ))
+
+                await db.commit()
+
+        except Exception as exc:
+            logger.debug("코인 스캔 오류 %s: %s", ticker, exc)
+            raise
+
+
+async def _process_coin_events(db):
+    """코인 미알림 이벤트 푸시 발송."""
+    from sqlalchemy import update
+    from services.push_service import send_push_to_all
+
+    cross_res = await db.execute(
+        select(CoinCrossEvent).where(CoinCrossEvent.notified == False)
+    )
+    for event in cross_res.scalars().all():
+        coin_res = await db.execute(select(Coin).where(Coin.id == event.coin_id))
+        coin = coin_res.scalar_one_or_none()
+        if not coin:
+            continue
+        direction = "골든크로스" if "GOLDEN" in event.event_type else "데드크로스"
+        ma_pair = event.event_type.split("_", 1)[1].replace("_", "/")
+        title = f"[코인] {coin.name} {direction} 발생"
+        body  = f"MA{ma_pair} 교차 | 단기: {event.short_val:,.0f} 장기: {event.long_val:,.0f}"
+        await send_push_to_all(db, title=title, body=body)
+        await db.execute(
+            update(CoinCrossEvent).where(CoinCrossEvent.id == event.id).values(notified=True)
+        )
+
+    vol_res = await db.execute(
+        select(CoinVolumeSpikeEvent).where(CoinVolumeSpikeEvent.notified == False)
+    )
+    for event in vol_res.scalars().all():
+        coin_res = await db.execute(select(Coin).where(Coin.id == event.coin_id))
+        coin = coin_res.scalar_one_or_none()
+        if not coin:
+            continue
+        title = f"[코인] {coin.name} 거래량 급증"
+        body  = f"평균 대비 {event.ratio:.1f}배"
+        await send_push_to_all(db, title=title, body=body)
+        await db.execute(
+            update(CoinVolumeSpikeEvent)
+            .where(CoinVolumeSpikeEvent.id == event.id)
+            .values(notified=True)
+        )
+
+    await db.commit()
 
 
 def _sf(val) -> float | None:
