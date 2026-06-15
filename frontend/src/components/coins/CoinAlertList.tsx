@@ -54,6 +54,8 @@ export default function CoinAlertList() {
 
   const crossEvents: CoinCrossEvent[]       = data?.cross_events ?? [];
   const volSpikes:   CoinVolumeSpikeEvent[] = data?.volume_spikes ?? [];
+  const PAGE_SIZE = 20;
+  const isLastPage = crossEvents.length < PAGE_SIZE && volSpikes.length < PAGE_SIZE;
 
   const availablePairs = useMemo(() => {
     const keys = new Set<string>();
@@ -232,7 +234,8 @@ export default function CoinAlertList() {
           <span className="text-gray-400 text-sm px-2">{page}</span>
           <button
             onClick={() => setPage((p) => p + 1)}
-            className="px-3 py-1 text-sm rounded bg-gray-800 text-gray-300 hover:bg-gray-700"
+            disabled={isLastPage}
+            className="px-3 py-1 text-sm rounded bg-gray-800 text-gray-300 hover:bg-gray-700 disabled:opacity-40"
           >
             다음
           </button>

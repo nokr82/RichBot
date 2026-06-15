@@ -57,11 +57,13 @@ async def generate_stock_commentary(stock, target_date: date, db: AsyncSession) 
     return commentary, model
 
 
+def _fmt(val, spec=".0f") -> str:
+    return f"{val:{spec}}" if val is not None else "N/A"
+
+
 def _build_prompt(stock, target_date: date, prices, crosses, disclosures) -> str:
-    latest = prices[-1] if prices else None
     price_lines = "\n".join(
-        f"  {p.date}: 종가 {p.close:,.0f} | MA5={p.ma5 or 'N/A':.0f} MA20={p.ma20 or 'N/A':.0f} MA60={p.ma60 or 'N/A':.0f} 거래량비율={p.volume_ratio or 'N/A':.2f}"
-        if p.ma5 else f"  {p.date}: 종가 {p.close:,.0f}"
+        f"  {p.date}: 종가 {p.close:,.0f} | MA20={_fmt(p.ma20)} MA60={_fmt(p.ma60)} 거래량비율={_fmt(p.volume_ratio, '.2f')}"
         for p in prices
     )
     cross_lines = "\n".join(

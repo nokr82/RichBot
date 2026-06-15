@@ -7,6 +7,7 @@ import type { Disclosure } from "@/types";
 export default function DisclosureFeed() {
   const queryClient = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
 
   const { data: disclosures = [], isLoading } = useQuery<Disclosure[]>({
     queryKey: ["disclosures"],
@@ -16,9 +17,12 @@ export default function DisclosureFeed() {
 
   const handleRefresh = async () => {
     setRefreshing(true);
+    setRefreshError(null);
     try {
       await api.post("/api/disclosures/refresh");
       await queryClient.invalidateQueries({ queryKey: ["disclosures"] });
+    } catch {
+      setRefreshError("공시 수집에 실패했습니다. DART API 키를 확인하세요.");
     } finally {
       setRefreshing(false);
     }
@@ -36,6 +40,12 @@ export default function DisclosureFeed() {
           {refreshing ? "수집 중…" : "↻ 새로고침"}
         </button>
       </div>
+
+      {refreshError && (
+        <div className="text-red-400 text-sm bg-red-900/30 border border-red-800 rounded-lg px-3 py-2">
+          {refreshError}
+        </div>
+      )}
 
       {isLoading ? (
         <div className="text-gray-400 p-8 text-center">로딩 중...</div>

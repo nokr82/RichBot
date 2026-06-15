@@ -13,6 +13,7 @@ from services.indicators import compute_indicators, detect_crosses, detect_volum
 from services.coin_data import fetch_coin_ohlcv, get_all_coins
 from services.coin_indicators import compute_coin_indicators, detect_coin_crosses, detect_coin_volume_spike
 from services.alert_engine import process_new_events
+from services.utils import safe_float
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +127,7 @@ async def _scan_ticker(
                             stock_id=stock.id,
                             date=today,
                             current_volume=int(curr["volume"]),
-                            avg_volume_20=int(curr["vol_avg20"]) if _sf(curr.get("vol_avg20")) else None,
+                            avg_volume_20=int(curr["vol_avg20"]) if safe_float(curr.get("vol_avg20")) else None,
                             ratio=float(curr["volume_ratio"]),
                             threshold=volume_threshold,
                         ))
@@ -245,7 +246,7 @@ async def _scan_coin_ticker(coin_info: dict, semaphore: asyncio.Semaphore):
                             coin_id=coin.id,
                             date=today,
                             current_volume=float(curr["volume"]),
-                            avg_volume_20=_sf(curr.get("vol_avg20")),
+                            avg_volume_20=safe_float(curr.get("vol_avg20")),
                             ratio=float(curr["volume_ratio"]),
                             threshold=volume_threshold,
                         ))
@@ -297,11 +298,3 @@ async def _process_coin_events(db):
         )
 
     await db.commit()
-
-
-def _sf(val) -> float | None:
-    try:
-        f = float(val)
-        return None if f != f else f
-    except (TypeError, ValueError):
-        return None

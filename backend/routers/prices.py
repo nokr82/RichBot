@@ -7,6 +7,7 @@ from models.stock import Stock, PriceSnapshot
 from schemas.stock import PriceSnapshotOut
 from services.stock_data import fetch_ohlcv, fetch_ohlcv_interval
 from services.indicators import compute_indicators
+from services.utils import safe_float
 
 router = APIRouter(prefix="/api/prices", tags=["prices"])
 
@@ -34,18 +35,13 @@ async def live_chart(
     df = compute_indicators(df)
     rows = []
     for idx, row in df.iterrows():
-        def sf(v):
-            try:
-                f = float(v); return None if f != f else f
-            except Exception:
-                return None
         rows.append(PriceSnapshotOut(
             date=idx.to_pydatetime() if hasattr(idx, "to_pydatetime") else idx,
-            open=sf(row.get("open")), high=sf(row.get("high")),
-            low=sf(row.get("low")), close=float(row["close"]), volume=int(row["volume"]),
-            ma20=sf(row.get("ma20")), ma50=sf(row.get("ma50")), ma60=sf(row.get("ma60")),
-            ma120=sf(row.get("ma120")), ma200=sf(row.get("ma200")), ma240=sf(row.get("ma240")),
-            volume_ratio=sf(row.get("volume_ratio")),
+            open=safe_float(row.get("open")), high=safe_float(row.get("high")),
+            low=safe_float(row.get("low")), close=float(row["close"]), volume=int(row["volume"]),
+            ma20=safe_float(row.get("ma20")), ma50=safe_float(row.get("ma50")), ma60=safe_float(row.get("ma60")),
+            ma120=safe_float(row.get("ma120")), ma200=safe_float(row.get("ma200")), ma240=safe_float(row.get("ma240")),
+            volume_ratio=safe_float(row.get("volume_ratio")),
         ))
     return rows
 
