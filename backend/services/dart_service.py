@@ -1,4 +1,7 @@
-﻿import httpx
+﻿import io
+import zipfile
+import xml.etree.ElementTree as ET
+import httpx
 import logging
 from datetime import date, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +13,34 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 DART_BASE = "https://opendart.fss.or.kr/api"
+
+_USEFUL_TYPES = {"A", "B", "C", "D", "I"}  # 정기·주요사항·발행·지분·거래소
+
+_corp_code_cache: dict[str, str] = {}
+
+
+async def _ensure_corp_code_map(client: httpx.AsyncClient) -> None:
+    """Download and cache the DART corp_code ↔ stock_code mapping (runs once per process)."""
+    if _corp_code_cache:
+        return
+    try:
+        resp = await client.get(
+            f"{DART_BASE}/corpCode.xml",
+            params={"crtfc_key": settings.dart_api_key},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+            xml_bytes = zf.read("CORPCODE.xml")
+        root = ET.fromstring(xml_bytes)
+        for item in root.findall("list"):
+            stock_code = (item.findtext("stock_code") or "").strip()
+            corp_code  = (item.findtext("corp_code")  or "").strip()
+            if stock_code and corp_code:
+                _corp_code_cache[stock_code] = corp_code
+        logger.info("DART 기업코드 캐시 완료: %d개", len(_corp_code_cache))
+    except Exception as exc:
+        logger.error("DART corpCode.xml 다운로드 실패: %s", exc)
 
 
 async def fetch_watchlist_disclosures(db: AsyncSession, days: int = 30):
@@ -25,14 +56,15 @@ async def fetch_watchlist_disclosures(db: AsyncSession, days: int = 30):
     start_date = end_date - timedelta(days=days)
 
     async with httpx.AsyncClient(timeout=30) as client:
+        await _ensure_corp_code_map(client)
+
         for stock in stocks:
             try:
-                corp_code = await _get_corp_code(client, stock.ticker)
+                corp_code = _corp_code_cache.get(stock.ticker)
                 if not corp_code:
                     logger.warning("corp_code 조회 실패: %s", stock.ticker)
                     continue
 
-                # pblntf_ty 미지정 → 전체 공시 유형(정기·주요사항·발행·지분·기타) 조회
                 resp = await client.get(f"{DART_BASE}/list.json", params={
                     "crtfc_key": settings.dart_api_key,
                     "corp_code": corp_code,
@@ -50,7 +82,7 @@ async def fetch_watchlist_disclosures(db: AsyncSession, days: int = 30):
                                 data.get("status"), stock.ticker, data.get("message", ""))
                     continue
 
-                items = data.get("list", [])
+                items = [i for i in data.get("list", []) if i.get("pblntf_ty") in _USEFUL_TYPES]
                 for item in items:
                     rcept_dt = _parse_date(item.get("rcept_dt", ""))
                     if not rcept_dt:
@@ -73,24 +105,9 @@ async def fetch_watchlist_disclosures(db: AsyncSession, days: int = 30):
     await db.commit()
 
 
-async def _get_corp_code(client: httpx.AsyncClient, ticker: str) -> str | None:
-    """Get DART corp_code from stock ticker using DART corp search API."""
-    try:
-        resp = await client.get(f"{DART_BASE}/company.json", params={
-            "crtfc_key": settings.dart_api_key,
-            "stock_code": ticker,
-        })
-        if resp.status_code == 200:
-            data = resp.json()
-            if data.get("status") == "000":
-                return data.get("corp_code")
-    except Exception:
-        pass
-    return None
-
-
 def _parse_date(s: str) -> date | None:
     try:
         return date(int(s[:4]), int(s[4:6]), int(s[6:8]))
     except (ValueError, IndexError):
         return None
+
