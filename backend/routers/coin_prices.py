@@ -7,6 +7,7 @@ from models.coin import Coin, CoinPriceSnapshot
 from schemas.coin import CoinPriceSnapshotOut
 from services.coin_data import fetch_coin_chart
 from services.coin_indicators import compute_coin_indicators
+from services.utils import safe_float
 
 router = APIRouter(prefix="/api/coin-prices", tags=["coin-prices"])
 
@@ -14,7 +15,7 @@ router = APIRouter(prefix="/api/coin-prices", tags=["coin-prices"])
 @router.get("/{ticker}/chart", response_model=list[CoinPriceSnapshotOut])
 async def coin_chart(
     ticker: str,
-    interval: str = Query(default="day", pattern="^(day|60m|week|month)$"),
+    interval: str = Query(default="day", pattern="^(15m|60m|day|week|month|year)$"),
 ):
     df = await fetch_coin_chart(ticker, interval)
     if df.empty:
@@ -22,20 +23,15 @@ async def coin_chart(
     df = compute_coin_indicators(df)
     rows = []
     for idx, row in df.iterrows():
-        def sf(v):
-            try:
-                f = float(v); return None if f != f else f
-            except Exception:
-                return None
         rows.append(CoinPriceSnapshotOut(
             date=idx.to_pydatetime() if hasattr(idx, "to_pydatetime") else idx,
-            open=sf(row.get("open")), high=sf(row.get("high")),
-            low=sf(row.get("low")), close=float(row["close"]),
+            open=safe_float(row.get("open")), high=safe_float(row.get("high")),
+            low=safe_float(row.get("low")), close=float(row["close"]),
             volume=float(row["volume"]),
-            ma7=sf(row.get("ma7")), ma20=sf(row.get("ma20")),
-            ma25=sf(row.get("ma25")), ma50=sf(row.get("ma50")),
-            ma99=sf(row.get("ma99")), ma200=sf(row.get("ma200")),
-            volume_ratio=sf(row.get("volume_ratio")),
+            ma7=safe_float(row.get("ma7")), ma20=safe_float(row.get("ma20")),
+            ma25=safe_float(row.get("ma25")), ma50=safe_float(row.get("ma50")),
+            ma99=safe_float(row.get("ma99")), ma200=safe_float(row.get("ma200")),
+            volume_ratio=safe_float(row.get("volume_ratio")),
         ))
     return rows
 
@@ -59,3 +55,4 @@ async def _get_coin(ticker: str, db: AsyncSession) -> Coin:
     if not coin:
         raise HTTPException(status_code=404, detail="Coin not found")
     return coin
+

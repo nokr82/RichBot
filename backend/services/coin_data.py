@@ -97,12 +97,21 @@ async def fetch_coin_ohlcv(ticker: str, days: int = 400) -> pd.DataFrame:
 
 
 async def fetch_coin_chart(ticker: str, interval: str = "day") -> pd.DataFrame:
-    """Fetch OHLCV for chart: day / 60m / week / month."""
+    """Fetch OHLCV for chart: 15m / 60m / day / week / month / year."""
+    if interval == "year":
+        df = await fetch_coin_chart(ticker, "month")
+        if df.empty:
+            return df
+        df.index = pd.to_datetime(df.index)
+        df = df.resample("YE").agg({"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}).dropna()
+        return df
+
     interval_map: dict[str, tuple[str, dict[str, Any]]] = {
+        "15m":   ("candles/minutes/15", {"market": ticker, "count": 200}),
         "day":   ("candles/days",       {"market": ticker, "count": 200}),
         "60m":   ("candles/minutes/60", {"market": ticker, "count": 200}),
         "week":  ("candles/weeks",      {"market": ticker, "count": 100}),
-        "month": ("candles/months",     {"market": ticker, "count": 60}),
+        "month": ("candles/months",     {"market": ticker, "count": 120}),
     }
     path, params = interval_map.get(interval, interval_map["day"])
 
@@ -129,3 +138,4 @@ async def fetch_coin_chart(ticker: str, interval: str = "day") -> pd.DataFrame:
     })
     df = df[["date", "open", "high", "low", "close", "volume"]].set_index("date").sort_index()
     return df
+

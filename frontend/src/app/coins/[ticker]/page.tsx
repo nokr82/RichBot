@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useCoins, useAddCoin, useDeleteCoin, useCoinInfo, useCoinChart } from "@/hooks/useCoin";
 import CoinPriceChart from "@/components/charts/CoinPriceChart";
+import CoinAICommentaryCard from "@/components/ai/CoinAICommentaryCard";
 
 function formatCoinPrice(v: number) {
   if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`;
@@ -138,6 +139,11 @@ export default function CoinDetailPage() {
         <h2 className="text-lg font-semibold text-white mb-4">가격 차트</h2>
         <CoinPriceChart ticker={ticker} height={520} />
       </div>
+
+      {/* AI 해설 */}
+      {isInWatchlist && (
+        <CoinAICommentaryCard ticker={ticker} coinName={coinName} />
+      )}
     </div>
   );
 }

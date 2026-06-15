@@ -183,3 +183,20 @@ export interface CoinAlertsResponse {
   cross_events: CoinCrossEvent[];
   volume_spikes: CoinVolumeSpikeEvent[];
 }
+
+
+export interface CoinAiCommentary {
+  id: number;
+  coin_id: number;
+  date: string;
+  commentary: string;
+  model_used?: string | null;
+  generated_at: string;
+}
+
+export interface GlobalCoinAlertSetting {
+  id: number;
+  enabled_pairs: string[];
+  volume_spike: boolean;
+  volume_threshold: number;
+}

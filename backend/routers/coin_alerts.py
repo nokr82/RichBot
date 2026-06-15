@@ -2,8 +2,11 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 from database import get_db
-from models.coin import Coin, CoinCrossEvent, CoinVolumeSpikeEvent, CoinAlertSetting
-from schemas.coin import CoinCrossEventOut, CoinVolumeSpikeEventOut, CoinAlertSettingOut, CoinAlertSettingUpdate
+from models.coin import Coin, CoinCrossEvent, CoinVolumeSpikeEvent, CoinAlertSetting, GlobalCoinAlertSetting
+from schemas.coin import (
+    CoinCrossEventOut, CoinVolumeSpikeEventOut, CoinAlertSettingOut, CoinAlertSettingUpdate,
+    GlobalCoinAlertSettingOut, GlobalCoinAlertSettingUpdate,
+)
 
 router = APIRouter(prefix="/api/coin-alerts", tags=["coin-alerts"])
 
@@ -98,9 +101,39 @@ async def update_coin_settings(ticker: str, payload: CoinAlertSettingUpdate, db:
     return CoinAlertSettingOut.model_validate(setting)
 
 
+# ── 전역 알림 설정 ──────────────────────────────────────────────────────────
+
+@router.get("/global-settings", response_model=GlobalCoinAlertSettingOut)
+async def get_global_coin_settings(db: AsyncSession = Depends(get_db)):
+    setting = await _get_or_create_global_coin(db)
+    return GlobalCoinAlertSettingOut.model_validate(setting)
+
+
+@router.put("/global-settings", response_model=GlobalCoinAlertSettingOut)
+async def update_global_coin_settings(payload: GlobalCoinAlertSettingUpdate, db: AsyncSession = Depends(get_db)):
+    setting = await _get_or_create_global_coin(db)
+    for field, val in payload.model_dump(exclude_none=True).items():
+        setattr(setting, field, val)
+    await db.commit()
+    await db.refresh(setting)
+    return GlobalCoinAlertSettingOut.model_validate(setting)
+
+
+async def _get_or_create_global_coin(db: AsyncSession) -> GlobalCoinAlertSetting:
+    result = await db.execute(select(GlobalCoinAlertSetting).where(GlobalCoinAlertSetting.id == 1))
+    setting = result.scalar_one_or_none()
+    if not setting:
+        setting = GlobalCoinAlertSetting(id=1)
+        db.add(setting)
+        await db.commit()
+        await db.refresh(setting)
+    return setting
+
+
 async def _get_coin(ticker: str, db: AsyncSession) -> Coin:
     result = await db.execute(select(Coin).where(Coin.ticker == ticker, Coin.is_active == True))
     coin = result.scalar_one_or_none()
     if not coin:
         raise HTTPException(status_code=404, detail="Coin not found")
     return coin
+

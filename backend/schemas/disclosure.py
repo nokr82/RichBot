@@ -26,3 +26,14 @@ class AiCommentaryOut(BaseModel):
     generated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class CoinAiCommentaryOut(BaseModel):
+    id: int
+    coin_id: int
+    date: date
+    commentary: str
+    model_used: Optional[str] = None
+    generated_at: datetime
+
+    model_config = {"from_attributes": True}

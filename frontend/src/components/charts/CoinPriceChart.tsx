@@ -6,13 +6,15 @@ import {
   Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
 
-type CoinChartInterval = "60m" | "day" | "week" | "month";
+type CoinChartInterval = "15m" | "60m" | "day" | "week" | "month" | "year";
 
 const INTERVALS: { label: string; value: CoinChartInterval }[] = [
+  { label: "15분", value: "15m" },
   { label: "60분", value: "60m" },
   { label: "일봉", value: "day" },
   { label: "주봉", value: "week" },
   { label: "월봉", value: "month" },
+  { label: "연봉", value: "year" },
 ];
 
 const PRESETS = [
@@ -82,7 +84,7 @@ export default function CoinPriceChart({ ticker, height = 320 }: { ticker: strin
   const { data: history = [], isLoading } = useCoinChart(ticker, chartInterval);
 
   const chartData: ChartRow[] = history.map((p) => ({
-    date:   p.date.slice(0, chartInterval === "60m" ? 16 : 10),
+    date:   p.date.slice(0, (chartInterval === "15m" || chartInterval === "60m") ? 16 : 10),
     open:   p.open  ?? undefined,
     high:   p.high  ?? undefined,
     low:    p.low   ?? undefined,
@@ -265,3 +267,4 @@ export default function CoinPriceChart({ ticker, height = 320 }: { ticker: strin
     </div>
   );
 }
+

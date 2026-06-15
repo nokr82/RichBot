@@ -19,6 +19,7 @@ class Coin(Base):
     alert_setting = relationship("CoinAlertSetting", back_populates="coin", uselist=False, cascade="all, delete-orphan")
     cross_events = relationship("CoinCrossEvent", back_populates="coin", cascade="all, delete-orphan")
     volume_spike_events = relationship("CoinVolumeSpikeEvent", back_populates="coin", cascade="all, delete-orphan")
+    ai_commentaries = relationship("CoinAiCommentary", back_populates="coin", cascade="all, delete-orphan")
 
 
 class CoinPriceSnapshot(Base):
@@ -89,3 +90,12 @@ class CoinAlertSetting(Base):
     push_notify = Column(Boolean, default=True)
 
     coin = relationship("Coin", back_populates="alert_setting")
+
+
+class GlobalCoinAlertSetting(Base):
+    __tablename__ = "global_coin_alert_settings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    enabled_pairs = Column(JSON, default=lambda: list(COIN_DEFAULT_PAIRS))
+    volume_spike = Column(Boolean, default=True)
+    volume_threshold = Column(Float, default=2.0)

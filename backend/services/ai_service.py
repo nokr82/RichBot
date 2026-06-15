@@ -91,6 +91,61 @@ def _build_prompt(stock, target_date: date, prices, crosses, disclosures) -> str
 위 데이터를 바탕으로 가격 움직임의 주요 원인과 기술적 상황을 설명해 주세요. "사야 합니다" 또는 "팔아야 합니다"와 같은 직접적 투자 조언은 하지 마세요."""
 
 
+async def generate_coin_commentary(coin, target_date: date, db: AsyncSession) -> tuple[str, str]:
+    """Generate AI commentary for a coin on a given date. Returns (commentary, model_used)."""
+    if not settings.anthropic_api_key:
+        return "AI API 키가 설정되지 않았습니다. .env 파일에 ANTHROPIC_API_KEY를 설정하세요." + DISCLAIMER, "none"
+
+    from models.coin import CoinPriceSnapshot, CoinCrossEvent
+    from datetime import timedelta
+
+    price_res = await db.execute(
+        select(CoinPriceSnapshot)
+        .where(CoinPriceSnapshot.coin_id == coin.id)
+        .order_by(desc(CoinPriceSnapshot.date))
+        .limit(20)
+    )
+    prices = list(reversed(price_res.scalars().all()))
+
+    since_cross = target_date - timedelta(days=5)
+    cross_res = await db.execute(
+        select(CoinCrossEvent)
+        .where(CoinCrossEvent.coin_id == coin.id, CoinCrossEvent.occurred_at >= since_cross)
+    )
+    crosses = cross_res.scalars().all()
+
+    price_lines = "\n".join(
+        f"  {p.date}: 종가 {p.close:,.0f} | MA25={_fmt(p.ma25)} MA99={_fmt(p.ma99)} 거래량비율={_fmt(p.volume_ratio, '.2f')}"
+        for p in prices
+    )
+    cross_lines = "\n".join(
+        f"  {c.occurred_at.date()}: {c.event_type} (단기{c.short_val:,.0f}/장기{c.long_val:,.0f})"
+        for c in crosses
+    ) or "  없음"
+
+    prompt = f"""당신은 암호화폐 시장 분석가입니다. 아래 데이터를 바탕으로 {coin.name}({coin.ticker})의 최근 가격 움직임을 한국어로 3-4문장 분석해 주세요. 투자 조언은 제공하지 마세요.
+
+[기간] {target_date}
+
+[최근 20일 시세]
+{price_lines}
+
+[최근 크로스 이벤트]
+{cross_lines}
+
+위 데이터를 바탕으로 가격 움직임의 주요 원인과 기술적 상황을 설명해 주세요. "사야 합니다" 또는 "팔아야 합니다"와 같은 직접적 투자 조언은 하지 마세요."""
+
+    model = "claude-haiku-4-5-20251001"
+    import anthropic
+    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    response = client.messages.create(
+        model=model,
+        max_tokens=512,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return response.content[0].text + DISCLAIMER, model
+
+
 async def summarize_disclosure(disclosure) -> str:
     """Summarize a DART disclosure with AI."""
     if not settings.anthropic_api_key:

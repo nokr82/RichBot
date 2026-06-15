@@ -94,3 +94,18 @@ class CoinAlertSettingUpdate(BaseModel):
 class CoinAlertsResponse(BaseModel):
     cross_events: list[dict]
     volume_spikes: list[dict]
+
+
+class GlobalCoinAlertSettingOut(BaseModel):
+    id: int
+    enabled_pairs: list[str]
+    volume_spike: bool
+    volume_threshold: float
+
+    model_config = {"from_attributes": True}
+
+
+class GlobalCoinAlertSettingUpdate(BaseModel):
+    enabled_pairs: Optional[list[str]] = None
+    volume_spike: Optional[bool] = None
+    volume_threshold: Optional[float] = None

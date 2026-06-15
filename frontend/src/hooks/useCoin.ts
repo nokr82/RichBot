@@ -1,7 +1,7 @@
 ﻿"use client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/api";
-import type { Coin, CoinSearchResult, CoinPriceSnapshot, CoinAlertsResponse, CoinAlertSetting } from "@/types";
+import type { Coin, CoinSearchResult, CoinPriceSnapshot, CoinAlertsResponse, CoinAlertSetting, GlobalCoinAlertSetting } from "@/types";
 
 export function useCoins() {
   return useQuery<Coin[]>({
@@ -117,5 +117,21 @@ export function useManualCoinScan() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["coin-alerts"] });
     },
+  });
+}
+
+export function useGlobalCoinAlertSettings() {
+  return useQuery<GlobalCoinAlertSetting>({
+    queryKey: ["global-coin-alert-settings"],
+    queryFn: () => api.get("/api/coin-alerts/global-settings").then((r) => r.data),
+  });
+}
+
+export function useUpdateGlobalCoinAlertSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: Partial<GlobalCoinAlertSetting>) =>
+      api.put("/api/coin-alerts/global-settings", payload).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["global-coin-alert-settings"] }),
   });
 }

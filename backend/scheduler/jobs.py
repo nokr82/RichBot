@@ -7,7 +7,7 @@ from sqlalchemy import select
 from database import AsyncSessionLocal
 from models.stock import Stock
 from models.alert import CrossEvent, VolumeSpikeEvent, GlobalAlertSetting
-from models.coin import Coin, CoinCrossEvent, CoinVolumeSpikeEvent, CoinAlertSetting
+from models.coin import Coin, CoinCrossEvent, CoinVolumeSpikeEvent, CoinAlertSetting, GlobalCoinAlertSetting
 from services.stock_data import fetch_ohlcv, get_all_tickers
 from services.indicators import compute_indicators, detect_crosses, detect_volume_spike
 from services.coin_data import fetch_coin_ohlcv, get_all_coins
@@ -16,11 +16,6 @@ from services.alert_engine import process_new_events
 from services.utils import safe_float
 
 logger = logging.getLogger(__name__)
-
-_COIN_DEFAULT_PAIRS    = ["7_25", "7_99", "25_99", "50_200"]
-_COIN_DEFAULT_VOL      = True
-_COIN_DEFAULT_THRESH   = 2.0
-
 
 # ── 주식 스케줄 작업 ─────────────────────────────────────────────────────────
 
@@ -154,9 +149,21 @@ async def fetch_coin_prices_job():
         logger.warning("업비트 코인 목록 없음 — 캐시 갱신 실패")
         return
 
+    async with AsyncSessionLocal() as db:
+        gcs_res = await db.execute(select(GlobalCoinAlertSetting).where(GlobalCoinAlertSetting.id == 1))
+        gcs = gcs_res.scalar_one_or_none()
+        if not gcs:
+            gcs = GlobalCoinAlertSetting(id=1)
+            db.add(gcs)
+            await db.commit()
+            await db.refresh(gcs)
+        global_pairs     = gcs.enabled_pairs or ["7_25", "7_99", "25_99", "50_200"]
+        global_vol       = gcs.volume_spike
+        global_threshold = gcs.volume_threshold
+
     logger.info("전체코인 스캔 시작: %d개", len(all_coin_info))
     semaphore = asyncio.Semaphore(4)
-    tasks = [_scan_coin_ticker(info, semaphore) for info in all_coin_info]
+    tasks = [_scan_coin_ticker(info, global_pairs, global_vol, global_threshold, semaphore) for info in all_coin_info]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     errs = sum(1 for r in results if isinstance(r, Exception))
     if errs:
@@ -166,8 +173,8 @@ async def fetch_coin_prices_job():
         await _process_coin_events(db)
 
 
-async def _scan_coin_ticker(coin_info: dict, semaphore: asyncio.Semaphore):
-    """전체 업비트 코인 1개 스캔. 관심목록 코인은 개별 설정 사용, 나머지는 기본값."""
+async def _scan_coin_ticker(coin_info: dict, global_pairs: list[str], global_vol: bool, global_threshold: float, semaphore: asyncio.Semaphore):
+    """전체 업비트 코인 1개 스캔. 관심목록 코인은 개별 설정 사용, 나머지는 전역 설정."""
     async with semaphore:
         ticker = coin_info["ticker"]
         name   = coin_info.get("name", ticker)
@@ -186,13 +193,13 @@ async def _scan_coin_ticker(coin_info: dict, semaphore: asyncio.Semaphore):
                         select(CoinAlertSetting).where(CoinAlertSetting.coin_id == coin.id)
                     )
                     s = setting_res.scalar_one_or_none()
-                    enabled_pairs    = s.enabled_pairs    if s else _COIN_DEFAULT_PAIRS
-                    volume_enabled   = s.volume_spike     if s else _COIN_DEFAULT_VOL
-                    volume_threshold = s.volume_threshold if s else _COIN_DEFAULT_THRESH
+                    enabled_pairs    = s.enabled_pairs    if s else global_pairs
+                    volume_enabled   = s.volume_spike     if s else global_vol
+                    volume_threshold = s.volume_threshold if s else global_threshold
                 else:
-                    enabled_pairs    = _COIN_DEFAULT_PAIRS
-                    volume_enabled   = _COIN_DEFAULT_VOL
-                    volume_threshold = _COIN_DEFAULT_THRESH
+                    enabled_pairs    = global_pairs
+                    volume_enabled   = global_vol
+                    volume_threshold = global_threshold
 
             crosses = detect_coin_crosses(df, enabled_pairs, lookback=30)
             spike   = volume_enabled and detect_coin_volume_spike(df, volume_threshold)
@@ -298,3 +305,4 @@ async def _process_coin_events(db):
         )
 
     await db.commit()
+
