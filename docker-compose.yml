@@ -13,7 +13,7 @@
   backend:
     build: ./backend
     environment:
-      - DATABASE_URL=sqlite+aiosqlite:////data/richbot.db
+      - DATABASE_URL=${DATABASE_URL}
       - DART_API_KEY=${DART_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY}
@@ -22,7 +22,6 @@
       - SCHEDULER_INTERVAL_MINUTES=${SCHEDULER_INTERVAL_MINUTES:-15}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
     volumes:
-      - richbot_db:/data
       - ./backend/data:/app/data
     restart: unless-stopped
 
@@ -35,6 +34,3 @@
     depends_on:
       - backend
     restart: unless-stopped
-
-volumes:
-  richbot_db:
