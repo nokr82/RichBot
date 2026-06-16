@@ -69,9 +69,9 @@ export default function AllStocksList() {
         onChange={(e) => handleSearch(e.target.value)}
       />
 
-      <div className="flex gap-4">
-        {/* 종목 목록 */}
-        <div className="flex-1 min-w-0">
+      <div className="flex flex-col lg:flex-row gap-4">
+        {/* 종목 목록 (모바일에서 종목 선택 시 숨김) */}
+        <div className={`flex-1 min-w-0${selected ? " hidden lg:block" : ""}`}>
           {isLoading ? (
             <p className="text-gray-400 text-center py-12">로딩 중...</p>
           ) : items.length === 0 ? (
@@ -152,9 +152,9 @@ export default function AllStocksList() {
           )}
         </div>
 
-        {/* 상세 차트 패널 */}
+        {/* 상세 차트 패널 (모바일에서 전체 너비) */}
         {selected && (
-          <div className="w-full max-w-lg flex-shrink-0">
+          <div className="w-full lg:max-w-lg lg:flex-shrink-0">
             <StockDetailPanel
               stock={selected}
               inWatchlist={watchlistSet.has(selected.ticker)}
@@ -190,7 +190,11 @@ function StockDetailPanel({
   const latest = history.at(-1);
 
   return (
-    <div className="bg-gray-800 rounded-xl p-4 border border-gray-700 sticky top-4">
+    <div className="bg-gray-800 rounded-xl p-4 border border-gray-700 lg:sticky lg:top-4">
+      {/* 모바일 전용 뒤로가기 버튼 */}
+      <button onClick={onClose} className="lg:hidden mb-3 text-gray-400 hover:text-white text-sm">
+        ← 목록으로
+      </button>
       <div className="flex items-start justify-between mb-3">
         <div>
           <div className="flex items-center gap-2">
@@ -214,7 +218,7 @@ function StockDetailPanel({
           >
             {isPending ? "..." : inWatchlist ? "− 관심종목" : "+ 관심종목"}
           </button>
-          <button onClick={onClose} className="text-gray-400 hover:text-white text-xl leading-none">&times;</button>
+          <button onClick={onClose} className="hidden lg:block text-gray-400 hover:text-white text-xl leading-none">&times;</button>
         </div>
       </div>
 

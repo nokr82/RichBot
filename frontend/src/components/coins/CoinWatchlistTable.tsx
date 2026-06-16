@@ -22,8 +22,9 @@ export default function CoinWatchlistTable() {
   if (isLoading) return <div className="text-gray-400 p-8 text-center">로딩 중...</div>;
 
   return (
-    <div className="flex gap-4">
-      <div className="flex-1 min-w-0">
+    <div className="flex flex-col lg:flex-row gap-4">
+      {/* 왼쪽: 목록 (모바일에서 코인 선택 시 숨김) */}
+      <div className={`flex-1 min-w-0${selectedTicker ? " hidden lg:block" : ""}`}>
         <div className="flex items-center justify-between mb-4">
           <h1 className="text-2xl font-bold text-white">관심코인</h1>
           <button
@@ -137,13 +138,14 @@ function CoinRow({
 
 function CoinDetailPanel({ ticker, name, onClose }: { ticker: string; name: string; onClose: () => void }) {
   return (
-    <div className="w-[520px] bg-gray-800 rounded-xl p-4 h-fit sticky top-4">
+    <div className="w-full lg:w-[520px] bg-gray-800 rounded-xl p-4 h-fit lg:sticky lg:top-4">
       <div className="flex justify-between items-center mb-3">
-        <div>
+        <div className="flex items-center gap-2">
+          <button onClick={onClose} className="lg:hidden text-gray-400 hover:text-white text-sm">← 목록</button>
           <span className="text-white font-semibold">{name}</span>
-          <span className="text-gray-400 text-sm ml-2">{ticker}</span>
+          <span className="text-gray-400 text-sm">{ticker}</span>
         </div>
-        <button onClick={onClose} className="text-gray-400 hover:text-white text-lg">✕</button>
+        <button onClick={onClose} className="hidden lg:block text-gray-400 hover:text-white text-lg">✕</button>
       </div>
       <CoinPriceChart ticker={ticker} height={300} />
     </div>

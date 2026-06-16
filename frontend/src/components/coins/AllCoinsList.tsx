@@ -51,9 +51,9 @@ export default function AllCoinsList() {
   }
 
   return (
-    <div className="flex gap-4">
-      {/* 왼쪽: 목록 */}
-      <div className="flex-1 min-w-0">
+    <div className="flex flex-col lg:flex-row gap-4">
+      {/* 왼쪽: 목록 (모바일에서 코인 선택 시 숨김) */}
+      <div className={`flex-1 min-w-0${selectedTicker ? " hidden lg:block" : ""}`}>
         <div className="flex items-center gap-3 mb-4">
           <h1 className="text-2xl font-bold text-white shrink-0">전체코인</h1>
           <input
@@ -137,17 +137,23 @@ export default function AllCoinsList() {
         )}
       </div>
 
-      {/* 오른쪽: 차트 패널 */}
+      {/* 오른쪽: 차트 패널 (모바일에서 전체 너비) */}
       {selectedTicker && (
-        <div className="w-[540px] bg-gray-800 rounded-xl p-4 h-fit sticky top-4">
+        <div className="w-full lg:w-[540px] bg-gray-800 rounded-xl p-4 h-fit lg:sticky lg:top-4">
           <div className="flex justify-between items-center mb-3">
-            <div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setSelectedTicker(null)}
+                className="lg:hidden text-gray-400 hover:text-white text-sm"
+              >
+                ← 목록
+              </button>
               <span className="text-white font-semibold">{selectedName}</span>
-              <span className="text-gray-400 text-sm ml-2">{selectedTicker}</span>
+              <span className="text-gray-400 text-sm">{selectedTicker}</span>
             </div>
             <button
               onClick={() => setSelectedTicker(null)}
-              className="text-gray-400 hover:text-white text-lg"
+              className="hidden lg:block text-gray-400 hover:text-white text-lg"
             >
               ✕
             </button>

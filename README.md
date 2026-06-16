@@ -104,3 +104,14 @@ docker-compose up -d
 ## 라이선스
 
 MIT
+
+
+
+주식·암호화폐 모니터링 웹 서비스 개발 (개인 프로젝트)
+
+FastAPI + SQLAlchemy(async) 기반 REST API 서버 설계 및 구현, APScheduler로 KRX 주식 시세 자동 수집(일 1회) 및 암호화폐 시세 수집(시간별) 스케줄링
+FinanceDataReader(KRX), Upbit API를 통한 OHLCV 데이터 수집 및 이동평균선(MA5·20·60·99·200) 계산, 골든크로스·데드크로스 감지 알고리즘 구현
+Web Push(pywebpush, VAPID) 기반 실시간 알림 시스템 구축 — 크로스 이벤트 및 거래량 급증 감지 시 브라우저 푸시 발송
+DART OpenAPI 연동으로 관심종목 공시 자동 수집 및 Anthropic Claude API를 활용한 공시 요약·종목 AI 해설 기능 구현
+Next.js 16(App Router) + React Query + Recharts로 인터랙티브 차트(15분봉~연봉), 관심종목·전체종목 검색, 알림 내역 등 프론트엔드 구현
+Docker Compose + Nginx 리버스 프록시로 AWS EC2 프로덕션 배포 — same-origin 구성으로 CORS 제거, 무중단 업데이트 환경 구축
