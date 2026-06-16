@@ -1,8 +1,17 @@
 ﻿services:
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+      - frontend
+    restart: unless-stopped
+
   backend:
     build: ./backend
-    ports:
-      - "8000:8000"
     environment:
       - DATABASE_URL=sqlite+aiosqlite:////data/richbot.db
       - DART_API_KEY=${DART_API_KEY}
@@ -11,6 +20,7 @@
       - VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY}
       - VAPID_ADMIN_EMAIL=${VAPID_ADMIN_EMAIL:-admin@richbot.local}
       - SCHEDULER_INTERVAL_MINUTES=${SCHEDULER_INTERVAL_MINUTES:-15}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
     volumes:
       - richbot_db:/data
       - ./backend/data:/app/data
@@ -20,10 +30,8 @@
     build:
       context: ./frontend
       args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+        NEXT_PUBLIC_API_URL: ""
         NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
-    ports:
-      - "3000:3000"
     depends_on:
       - backend
     restart: unless-stopped
