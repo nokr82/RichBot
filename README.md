@@ -93,7 +93,11 @@ APScheduler가 백엔드 프로세스 내에서 함께 실행됩니다.
 
 ```bash
 docker-compose up -d
+##수정시
+docker compose down;
+docker compose up -d --build 2>&1
 ```
+
 
 ## 주요 제약
 
