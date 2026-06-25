@@ -1,233 +1,381 @@
 ﻿"use client";
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useCoinChart } from "@/hooks/useCoin";
+import type { CoinPriceSnapshot } from "@/types";
 import {
-  ComposedChart, Line, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, Legend, ResponsiveContainer,
-} from "recharts";
+  createChart,
+  ColorType,
+  CrosshairMode,
+  LineStyle,
+  CandlestickSeries,
+  LineSeries,
+  HistogramSeries,
+  type IChartApi,
+  type ISeriesApi,
+  type SeriesType,
+  type UTCTimestamp,
+  type Time,
+} from "lightweight-charts";
 
 type CoinChartInterval = "15m" | "60m" | "day" | "week" | "month" | "year";
 
 const INTERVALS: { label: string; value: CoinChartInterval }[] = [
-  { label: "15분", value: "15m" },
-  { label: "60분", value: "60m" },
-  { label: "일봉", value: "day" },
-  { label: "주봉", value: "week" },
-  { label: "월봉", value: "month" },
-  { label: "연봉", value: "year" },
+  { label: "15분", value: "15m"   },
+  { label: "60분", value: "60m"   },
+  { label: "일봉",  value: "day"   },
+  { label: "주봉",  value: "week"  },
+  { label: "월봉",  value: "month" },
+  { label: "연봉",  value: "year"  },
 ];
 
 const PRESETS = [
-  { label: "1M",  key: "1M",  count: 30  },
-  { label: "3M",  key: "3M",  count: 90  },
-  { label: "6M",  key: "6M",  count: 180 },
-  { label: "1Y",  key: "1Y",  count: 365 },
-  { label: "전체", key: "all", count: null as number | null },
+  { label: "1M",  key: "1M",  months: 1  },
+  { label: "3M",  key: "3M",  months: 3  },
+  { label: "6M",  key: "6M",  months: 6  },
+  { label: "1Y",  key: "1Y",  months: 12 },
+  { label: "전체", key: "all", months: 0  },
 ];
 
 const MA_LINES = [
-  { key: "MA7",   color: "#FB923C", name: "MA7"   },
-  { key: "MA25",  color: "#F59E0B", name: "MA25"  },
-  { key: "MA50",  color: "#84CC16", name: "MA50"  },
-  { key: "MA99",  color: "#22D3EE", name: "MA99"  },
-  { key: "MA200", color: "#F87171", name: "MA200" },
+  { key: "ma7",   color: "#FB923C", label: "MA7"   },
+  { key: "ma25",  color: "#F59E0B", label: "MA25"  },
+  { key: "ma50",  color: "#84CC16", label: "MA50"  },
+  { key: "ma99",  color: "#22D3EE", label: "MA99"  },
+  { key: "ma200", color: "#F87171", label: "MA200" },
 ];
 
-type ChartRow = {
-  date: string;
-  open?: number; high?: number; low?: number;
-  close: number; volume: number;
-  MA7?: number; MA25?: number; MA50?: number; MA99?: number; MA200?: number;
+const COIN_CHART_SETTINGS_KEY = "richbot-coin-chart-settings";
+
+type ChartSettings = {
+  interval: CoinChartInterval;
+  chartType: "line" | "candle";
+  activePreset: string;
+  visibleMAs: string[];
 };
 
-function tickFmt(v: number) {
-  if (v >= 1_000_000) return (v / 1_000_000).toFixed(1) + "M";
-  if (v >= 1_000) return (v / 1_000).toFixed(0) + "K";
-  return v.toLocaleString();
+function loadSettings(): Partial<ChartSettings> {
+  if (typeof window === "undefined") return {};
+  try { return JSON.parse(localStorage.getItem(COIN_CHART_SETTINGS_KEY) ?? "{}") ?? {}; }
+  catch { return {}; }
+}
+function saveSettings(s: ChartSettings) {
+  try { localStorage.setItem(COIN_CHART_SETTINGS_KEY, JSON.stringify(s)); } catch {}
 }
 
-function makeCandleShape(minP: number, maxP: number) {
-  return function CandleShape(props: {
-    x?: number; width?: number;
-    open?: number; high?: number; low?: number; close?: number;
-    background?: { x: number; y: number; width: number; height: number };
-  }) {
-    const { x = 0, width = 0, background, open, high, low, close } = props;
-    if (!background || open == null || high == null || low == null || close == null) return null;
-    const range = maxP - minP;
-    if (range === 0 || background.height === 0) return null;
-    const toY = (price: number) => background.y + ((maxP - price) / range) * background.height;
-    const highY = toY(high), lowY = toY(low), openY = toY(open), closeY = toY(close);
-    const isUp = close >= open;
-    const color = isUp ? "#34D399" : "#F87171";
-    const bodyTop = Math.min(openY, closeY);
-    const bodyH = Math.max(1, Math.abs(closeY - openY));
-    const cx = x + width / 2;
-    const bodyW = Math.max(2, width - 2);
-    return (
-      <g>
-        <line x1={cx} y1={highY} x2={cx} y2={lowY} stroke={color} strokeWidth={1} />
-        <rect x={cx - bodyW / 2} y={bodyTop} width={bodyW} height={bodyH} fill={color} />
-      </g>
-    );
-  };
+function toTime(dateStr: string, interval: CoinChartInterval): Time {
+  if (interval === "15m" || interval === "60m") {
+    return Math.floor(new Date(dateStr).getTime() / 1000) as UTCTimestamp;
+  }
+  const d =
+    dateStr.length === 4 ? `${dateStr}-01-01` :
+    dateStr.length === 7 ? `${dateStr}-01`    :
+    dateStr.slice(0, 10);
+  return d as Time;
 }
 
-export default function CoinPriceChart({ ticker, height = 320 }: { ticker: string; height?: number }) {
-  const [chartInterval, setChartInterval] = useState<CoinChartInterval>("day");
-  const [brushRange, setBrushRange] = useState<[number, number] | null>(null);
-  const [activePreset, setActivePreset] = useState("6M");
-  const [chartType, setChartType] = useState<"line" | "candle">("line");
-  const [visibleMAs, setVisibleMAs] = useState<Set<string>>(new Set(MA_LINES.map((m) => m.key)));
-  const chartContainerRef = useRef<HTMLDivElement>(null);
+function getMAValue(p: CoinPriceSnapshot, key: string): number | undefined {
+  const v = (p as unknown as Record<string, unknown>)[key];
+  return typeof v === "number" ? v : undefined;
+}
 
-  const { data: history = [], isLoading } = useCoinChart(ticker, chartInterval);
+export default function CoinPriceChart({ ticker, height = 400 }: { ticker: string; height?: number }) {
+  const s = loadSettings();
 
-  const chartData: ChartRow[] = history.map((p) => ({
-    date:   p.date.slice(0, (chartInterval === "15m" || chartInterval === "60m") ? 16 : 10),
-    open:   p.open  ?? undefined,
-    high:   p.high  ?? undefined,
-    low:    p.low   ?? undefined,
-    close:  p.close,
-    volume: p.volume,
-    MA7:    p.ma7   ?? undefined,
-    MA25:   p.ma25  ?? undefined,
-    MA50:   p.ma50  ?? undefined,
-    MA99:   p.ma99  ?? undefined,
-    MA200:  p.ma200 ?? undefined,
-  }));
+  const [interval, setInterval_] = useState<CoinChartInterval>(s.interval ?? "day");
+  const [chartType, setChartType] = useState<"line" | "candle">(s.chartType ?? "candle");
+  const [activePreset, setActivePreset] = useState(s.activePreset ?? "6M");
+  const [visibleMAs, setVisibleMAs] = useState<Set<string>>(
+    new Set(s.visibleMAs ?? MA_LINES.map((m) => m.key))
+  );
 
+  const containerRef = useRef<HTMLDivElement>(null);
+  const chartRef  = useRef<IChartApi | null>(null);
+  const candleRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const lineRef   = useRef<ISeriesApi<"Line"> | null>(null);
+  const volRef    = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const maRefs    = useRef<Map<string, ISeriesApi<SeriesType>>>(new Map());
+
+  const { data: history = [], isLoading } = useCoinChart(ticker, interval);
+
+  // ── 차트 초기화 (마운트 1회) ────────────────────────────────────────────
   useEffect(() => {
-    if (chartData.length === 0) return;
-    const preset = PRESETS.find((p) => p.key === activePreset);
-    if (!preset || preset.count === null) { setBrushRange(null); return; }
-    const count = Math.min(preset.count, chartData.length);
-    setBrushRange([chartData.length - count, chartData.length - 1]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chartData.length, chartInterval]);
+    if (!containerRef.current) return;
 
-  const startIdx = brushRange?.[0] ?? 0;
-  const endIdx   = brushRange?.[1] ?? Math.max(0, chartData.length - 1);
-  const visibleSlice = chartData.slice(startIdx, endIdx + 1);
+    const chart = createChart(containerRef.current, {
+      layout: {
+        background: { type: ColorType.Solid, color: "#131722" },
+        textColor: "#B2B5BE",
+        fontSize: 11,
+      },
+      grid: {
+        vertLines: { color: "#1E2029", style: LineStyle.Solid },
+        horzLines: { color: "#1E2029", style: LineStyle.Solid },
+      },
+      crosshair: { mode: CrosshairMode.Normal },
+      rightPriceScale: { borderColor: "#2B2B43" },
+      timeScale: {
+        borderColor: "#2B2B43",
+        timeVisible: false,
+        secondsVisible: false,
+      },
+      width: containerRef.current.offsetWidth,
+      height,
+    });
+    chartRef.current = chart;
 
-  const allPrices = visibleSlice.flatMap((d) => {
-    const maVals = MA_LINES.filter(({ key }) => visibleMAs.has(key)).map(({ key }) => d[key as keyof ChartRow] as number | undefined);
-    const ohlc = chartType === "candle" ? [d.high, d.low] : [d.close];
-    return [...ohlc, ...maVals].filter((v): v is number => typeof v === "number" && !isNaN(v));
-  });
-  const minP = allPrices.length ? Math.min(...allPrices) * 0.98 : 0;
-  const maxP = allPrices.length ? Math.max(...allPrices) * 1.02 : 100;
+    // 거래량 (하단 약 15%)
+    const vol = chart.addSeries(HistogramSeries, {
+      priceFormat: { type: "volume" },
+      priceScaleId: "vol",
+    });
+    chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
+    volRef.current = vol;
 
-  const startIdxRef = useRef(startIdx);
-  const endIdxRef   = useRef(endIdx);
-  const chartLenRef = useRef(chartData.length);
-  useEffect(() => { startIdxRef.current = startIdx; }, [startIdx]);
-  useEffect(() => { endIdxRef.current   = endIdx;   }, [endIdx]);
-  useEffect(() => { chartLenRef.current = chartData.length; }, [chartData.length]);
+    // 캔들 시리즈
+    const candle = chart.addSeries(CandlestickSeries, {
+      upColor: "#26a69a",
+      downColor: "#ef5350",
+      borderUpColor: "#26a69a",
+      borderDownColor: "#ef5350",
+      wickUpColor: "#26a69a",
+      wickDownColor: "#ef5350",
+    });
+    candleRef.current = candle;
 
-  const applyPreset = useCallback((key: string, count: number | null) => {
-    setActivePreset(key);
-    const len = history.length;
-    if (count === null || len === 0) { setBrushRange(null); return; }
-    setBrushRange([len - Math.min(count, len), len - 1]);
-  }, [history.length]);
+    // 라인 시리즈 (기본 숨김)
+    const line = chart.addSeries(LineSeries, {
+      color: "#2962FF",
+      lineWidth: 2,
+      priceLineVisible: false,
+      visible: false,
+    });
+    lineRef.current = line;
 
-  const zoomIn = useCallback(() => {
-    setActivePreset("");
-    const s = startIdxRef.current, e = endIdxRef.current, span = e - s;
-    if (span <= 10) return;
-    const q = Math.floor(span / 4);
-    setBrushRange([s + q, e - q]);
-  }, []);
+    // MA 시리즈
+    MA_LINES.forEach(({ key, color }) => {
+      const ma = chart.addSeries(LineSeries, {
+        color,
+        lineWidth: 1,
+        lineStyle: LineStyle.Solid,
+        priceLineVisible: false,
+        lastValueVisible: false,
+      });
+      maRefs.current.set(key, ma);
+    });
 
-  const zoomOut = useCallback(() => {
-    setActivePreset("");
-    const s = startIdxRef.current, e = endIdxRef.current, span = e - s;
-    const q = Math.floor(span / 2);
-    setBrushRange([Math.max(0, s - q), Math.min(chartLenRef.current - 1, e + q)]);
-  }, []);
+    // 리사이즈 대응
+    const ro = new ResizeObserver(() => {
+      if (containerRef.current) chart.resize(containerRef.current.offsetWidth, height);
+    });
+    ro.observe(containerRef.current);
 
-  const zoomInRef = useRef(zoomIn);
-  const zoomOutRef = useRef(zoomOut);
-  useEffect(() => { zoomInRef.current  = zoomIn;  }, [zoomIn]);
-  useEffect(() => { zoomOutRef.current = zoomOut; }, [zoomOut]);
-
-  useEffect(() => {
-    const el = chartContainerRef.current;
-    if (!el) return;
-    const onWheel = (e: WheelEvent) => { e.preventDefault(); if (e.deltaY < 0) zoomInRef.current(); else zoomOutRef.current(); };
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
-  }, []);
-
-  useEffect(() => {
-    const el = chartContainerRef.current;
-    if (!el) return;
-    const drag = { active: false, startX: 0, startS: 0, startE: 0 };
-    const beginDrag = (x: number) => { drag.active = true; drag.startX = x; drag.startS = startIdxRef.current; drag.startE = endIdxRef.current; el.style.cursor = "grabbing"; };
-    const moveDrag  = (x: number) => {
-      if (!drag.active) return;
-      setActivePreset("");
-      const vc = drag.startE - drag.startS + 1;
-      const pxPerBar = (el.offsetWidth || 600) / vc;
-      const shift = Math.round(-(x - drag.startX) / pxPerBar);
-      const newS = Math.max(0, Math.min(chartLenRef.current - vc, drag.startS + shift));
-      setBrushRange([newS, newS + vc - 1]);
+    return () => {
+      ro.disconnect();
+      chart.remove();
+      chartRef.current = null;
     };
-    const endDrag = () => { if (!drag.active) return; drag.active = false; el.style.cursor = "grab"; };
-    const onMD = (e: MouseEvent) => beginDrag(e.clientX);
-    const onMM = (e: MouseEvent) => moveDrag(e.clientX);
-    const onMU = () => endDrag();
-    el.addEventListener("mousedown", onMD);
-    window.addEventListener("mousemove", onMM);
-    window.addEventListener("mouseup", onMU);
-    el.style.cursor = "grab";
-    return () => { el.removeEventListener("mousedown", onMD); window.removeEventListener("mousemove", onMM); window.removeEventListener("mouseup", onMU); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const CandleShape = makeCandleShape(minP, maxP);
+  // 인터벌 변경 시 timeVisible 업데이트
+  useEffect(() => {
+    const isIntraday = interval === "15m" || interval === "60m";
+    chartRef.current?.timeScale().applyOptions({ timeVisible: isIntraday });
+  }, [interval]);
+
+  // ── 데이터 업데이트 ─────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!history.length || !chartRef.current) return;
+
+    // 캔들
+    const candleData = history
+      .filter((p) => p.open != null && p.high != null && p.low != null)
+      .map((p) => ({
+        time:  toTime(p.date, interval),
+        open:  p.open!,
+        high:  p.high!,
+        low:   p.low!,
+        close: p.close,
+      }));
+    candleRef.current?.setData(candleData);
+
+    // 라인
+    lineRef.current?.setData(
+      history.map((p) => ({ time: toTime(p.date, interval), value: p.close }))
+    );
+
+    // 거래량
+    volRef.current?.setData(
+      history.map((p) => ({
+        time:  toTime(p.date, interval),
+        value: p.volume,
+        color: p.close >= (p.open ?? p.close)
+          ? "rgba(38,166,154,0.5)"
+          : "rgba(239,83,80,0.5)",
+      }))
+    );
+
+    // MA
+    MA_LINES.forEach(({ key }) => {
+      const maSeries = maRefs.current.get(key);
+      if (!maSeries) return;
+      const maData = history
+        .filter((p) => getMAValue(p, key) != null)
+        .map((p) => ({ time: toTime(p.date, interval), value: getMAValue(p, key)! }));
+      (maSeries as ISeriesApi<"Line">).setData(maData);
+    });
+
+    applyPresetRange(activePreset, history);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [history, interval]);
+
+  // ── 차트 타입 전환 ──────────────────────────────────────────────────────
+  useEffect(() => {
+    candleRef.current?.applyOptions({ visible: chartType === "candle" });
+    lineRef.current?.applyOptions({ visible: chartType === "line" });
+  }, [chartType]);
+
+  // ── MA 표시/숨김 ────────────────────────────────────────────────────────
+  useEffect(() => {
+    MA_LINES.forEach(({ key }) => {
+      maRefs.current.get(key)?.applyOptions({ visible: visibleMAs.has(key) });
+    });
+  }, [visibleMAs]);
+
+  // ── 설정 저장 ───────────────────────────────────────────────────────────
+  useEffect(() => {
+    saveSettings({ interval, chartType, activePreset, visibleMAs: [...visibleMAs] });
+  }, [interval, chartType, activePreset, visibleMAs]);
+
+  // ── 프리셋 범위 적용 ────────────────────────────────────────────────────
+  const applyPresetRange = useCallback(
+    (key: string, data: CoinPriceSnapshot[]) => {
+      if (!chartRef.current || !data.length) return;
+      if (key === "all") {
+        chartRef.current.timeScale().fitContent();
+        return;
+      }
+      const preset = PRESETS.find((p) => p.key === key);
+      if (!preset) return;
+      const lastDate = new Date(data[data.length - 1].date);
+      const fromDate = new Date(lastDate);
+      fromDate.setMonth(fromDate.getMonth() - preset.months);
+      chartRef.current.timeScale().setVisibleRange({
+        from: toTime(fromDate.toISOString().slice(0, 10), interval),
+        to:   toTime(lastDate.toISOString().slice(0, 10), interval),
+      });
+    },
+    [interval]
+  );
+
+  const handlePreset = useCallback(
+    (key: string) => {
+      setActivePreset(key);
+      applyPresetRange(key, history);
+    },
+    [applyPresetRange, history]
+  );
+
+  const handleInterval = useCallback((v: CoinChartInterval) => {
+    setInterval_(v);
+    setActivePreset("6M");
+  }, []);
+
+  const toggleMA = useCallback((key: string) => {
+    setVisibleMAs((prev) => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  }, []);
+
+  const fitAll = useCallback(() => {
+    setActivePreset("all");
+    chartRef.current?.timeScale().fitContent();
+  }, []);
 
   return (
     <div className="space-y-2">
+      {/* 컨트롤 1행: 봉 종류 | 차트 타입 + 전체보기 */}
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex gap-1">
           {INTERVALS.map(({ label, value }) => (
-            <button key={value} onClick={() => { setChartInterval(value); setBrushRange(null); setActivePreset("6M"); }}
-              className={`px-2 py-0.5 text-xs rounded ${chartInterval === value ? "bg-blue-600 text-white" : "bg-gray-700 text-gray-300 hover:bg-gray-600"}`}
-            >{label}</button>
+            <button
+              key={value}
+              onClick={() => handleInterval(value)}
+              className={`px-2 py-0.5 text-xs rounded transition-colors ${
+                interval === value
+                  ? "bg-blue-600 text-white"
+                  : "bg-gray-700 text-gray-300 hover:bg-gray-600"
+              }`}
+            >
+              {label}
+            </button>
           ))}
         </div>
+
         <div className="flex items-center gap-2">
           <div className="flex rounded overflow-hidden border border-gray-600">
             {(["line", "candle"] as const).map((t) => (
-              <button key={t} onClick={() => setChartType(t)} className={`px-2.5 py-0.5 text-xs ${chartType === t ? "bg-blue-600 text-white" : "bg-gray-700 text-gray-300 hover:bg-gray-600"}`}>
+              <button
+                key={t}
+                onClick={() => setChartType(t)}
+                className={`px-2.5 py-0.5 text-xs transition-colors ${
+                  chartType === t
+                    ? "bg-blue-600 text-white"
+                    : "bg-gray-700 text-gray-300 hover:bg-gray-600"
+                }`}
+              >
                 {t === "line" ? "라인" : "캔들"}
               </button>
             ))}
           </div>
-          <button onClick={() => zoomInRef.current()}  className="px-2 py-0.5 text-xs bg-gray-700 text-gray-300 hover:bg-gray-600 rounded">+</button>
-          <button onClick={() => zoomOutRef.current()} className="px-2 py-0.5 text-xs bg-gray-700 text-gray-300 hover:bg-gray-600 rounded">−</button>
-          <button onClick={() => { setActivePreset("전체"); setBrushRange(null); }} className="px-2 py-0.5 text-xs bg-gray-700 text-gray-300 hover:bg-gray-600 rounded">↺</button>
+          <button
+            onClick={fitAll}
+            className="px-2 py-0.5 text-xs bg-gray-700 text-gray-300 hover:bg-gray-600 rounded"
+            title="전체 보기"
+          >
+            ↺
+          </button>
         </div>
       </div>
 
+      {/* 컨트롤 2행: 기간 프리셋 | 이평선 토글 */}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex gap-1">
-          {PRESETS.map(({ label, key, count }) => (
-            <button key={key} onClick={() => applyPreset(key, count)}
-              className={`px-2.5 py-0.5 text-xs rounded font-medium ${activePreset === key ? "bg-indigo-600 text-white" : "bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200"}`}
-            >{label}</button>
+          {PRESETS.map(({ label, key }) => (
+            <button
+              key={key}
+              onClick={() => handlePreset(key)}
+              className={`px-2.5 py-0.5 text-xs rounded font-medium transition-colors ${
+                activePreset === key
+                  ? "bg-indigo-600 text-white"
+                  : "bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200"
+              }`}
+            >
+              {label}
+            </button>
           ))}
         </div>
+
         <div className="flex flex-wrap gap-1">
-          {MA_LINES.map(({ key, color, name }) => {
+          {MA_LINES.map(({ key, color, label }) => {
             const on = visibleMAs.has(key);
             return (
-              <button key={key} onClick={() => setVisibleMAs((prev) => { const n = new Set(prev); if (n.has(key)) n.delete(key); else n.add(key); return n; })}
-                className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${on ? "bg-gray-700 border-transparent text-white" : "bg-transparent border-gray-700 text-gray-500"}`}
+              <button
+                key={key}
+                onClick={() => toggleMA(key)}
+                className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border transition-all ${
+                  on
+                    ? "bg-gray-700 border-transparent text-white"
+                    : "bg-transparent border-gray-700 text-gray-500"
+                }`}
               >
-                <span className="inline-block w-2 h-2 rounded-sm" style={{ backgroundColor: on ? color : "#4B5563" }} />
-                {name}
+                <span
+                  className="inline-block w-2 h-2 rounded-sm flex-shrink-0"
+                  style={{ backgroundColor: on ? color : "#4B5563" }}
+                />
+                {label}
               </button>
             );
           })}
@@ -235,36 +383,15 @@ export default function CoinPriceChart({ ticker, height = 320 }: { ticker: strin
       </div>
 
       {isLoading ? (
-        <div className="h-52 flex items-center justify-center text-gray-400 text-sm">차트 로딩 중...</div>
-      ) : chartData.length === 0 ? (
-        <div className="h-20 flex items-center justify-center text-gray-500 text-sm">데이터 없음</div>
-      ) : (
-        <div ref={chartContainerRef} style={{ touchAction: "none", userSelect: "none" }}>
-          <ResponsiveContainer width="100%" height={height}>
-            <ComposedChart data={visibleSlice} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-              <XAxis dataKey="date" tick={{ fill: "#9CA3AF", fontSize: 10 }} interval="preserveStartEnd" />
-              <YAxis yAxisId="price" domain={[minP, maxP]} tick={{ fill: "#9CA3AF", fontSize: 10 }} tickFormatter={tickFmt} width={60} />
-              <YAxis yAxisId="vol" orientation="right" tick={{ fill: "#6B7280", fontSize: 9 }}
-                tickFormatter={(v: number) => v >= 1_000_000 ? (v / 1_000_000).toFixed(1) + "M" : (v / 1_000).toFixed(1) + "K"} width={44} />
-              <Tooltip contentStyle={{ backgroundColor: "#1F2937", border: "1px solid #374151", borderRadius: 8 }} labelStyle={{ color: "#F9FAFB" }}
-                formatter={(value: unknown) => typeof value === "number" ? value.toLocaleString() : String(value)} />
-              <Legend wrapperStyle={{ color: "#9CA3AF", fontSize: 10 }} />
-              <Bar yAxisId="vol" dataKey="volume" fill="#4B5563" opacity={0.35} name="거래량" />
-              {chartType === "line" && (
-                <Line yAxisId="price" type="monotone" dataKey="close" stroke="#60A5FA" dot={false} strokeWidth={2} name="종가" />
-              )}
-              {chartType === "candle" && (
-                <Bar yAxisId="price" dataKey="close" name="캔들" shape={<CandleShape />} isAnimationActive={false} />
-              )}
-              {MA_LINES.filter(({ key }) => visibleMAs.has(key)).map(({ key, color, name }) => (
-                <Line key={key} yAxisId="price" type="monotone" dataKey={key} stroke={color} dot={false} strokeWidth={1.5} strokeDasharray="4 2" name={name} connectNulls={false} />
-              ))}
-            </ComposedChart>
-          </ResponsiveContainer>
+        <div
+          className="flex items-center justify-center text-gray-400 text-sm"
+          style={{ height }}
+        >
+          차트 로딩 중...
         </div>
+      ) : (
+        <div ref={containerRef} style={{ height }} />
       )}
     </div>
   );
 }
-

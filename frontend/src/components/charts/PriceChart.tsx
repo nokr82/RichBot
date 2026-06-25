@@ -1,10 +1,21 @@
 ﻿"use client";
-import { useState, useCallback, useRef, useEffect } from "react";
-import { useChartData, type ChartInterval } from "@/hooks/useStockPrice";
+import { useEffect, useRef, useState, useCallback } from "react";
 import {
-  ComposedChart, Line, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, Legend, ResponsiveContainer,
-} from "recharts";
+  createChart,
+  ColorType,
+  CrosshairMode,
+  LineStyle,
+  CandlestickSeries,
+  LineSeries,
+  HistogramSeries,
+  type IChartApi,
+  type ISeriesApi,
+  type SeriesType,
+  type UTCTimestamp,
+  type Time,
+} from "lightweight-charts";
+import { useChartData, type ChartInterval } from "@/hooks/useStockPrice";
+import type { PriceSnapshot } from "@/types";
 
 interface Props {
   ticker: string;
@@ -19,303 +30,276 @@ const INTERVALS: { label: string; value: ChartInterval }[] = [
   { label: "연봉", value: "year" },
 ];
 
-// 프리셋별 마지막 N개 봉 (null = 전체)
-const PRESETS: { label: string; key: string; count: number | null }[] = [
-  { label: "1M",  key: "1M",  count: 22  },
-  { label: "3M",  key: "3M",  count: 66  },
-  { label: "6M",  key: "6M",  count: 132 },
-  { label: "1Y",  key: "1Y",  count: 252 },
-  { label: "전체", key: "all", count: null },
+const PRESETS = [
+  { label: "1M",  key: "1M",  months: 1  },
+  { label: "3M",  key: "3M",  months: 3  },
+  { label: "6M",  key: "6M",  months: 6  },
+  { label: "1Y",  key: "1Y",  months: 12 },
+  { label: "전체", key: "all", months: 0  },
 ];
 
 const MA_LINES = [
-  { key: "MA20",  color: "#F59E0B", name: "MA20" },
-  { key: "MA50",  color: "#84CC16", name: "MA50" },
-  { key: "MA60",  color: "#34D399", name: "MA60" },
-  { key: "MA120", color: "#22D3EE", name: "MA120" },
-  { key: "MA200", color: "#F87171", name: "MA200" },
-  { key: "MA240", color: "#A78BFA", name: "MA240" },
+  { key: "ma20",  color: "#F59E0B", label: "MA20"  },
+  { key: "ma50",  color: "#84CC16", label: "MA50"  },
+  { key: "ma60",  color: "#34D399", label: "MA60"  },
+  { key: "ma120", color: "#22D3EE", label: "MA120" },
+  { key: "ma200", color: "#F87171", label: "MA200" },
+  { key: "ma240", color: "#A78BFA", label: "MA240" },
 ];
 
-type ChartRow = {
-  date: string;
-  open?: number;
-  high?: number;
-  low?: number;
-  close: number;
-  volume: number;
-  MA20?: number;
-  MA50?: number;
-  MA60?: number;
-  MA120?: number;
-  MA200?: number;
-  MA240?: number;
-};
-
-function formatDate(dateStr: string, interval: ChartInterval): string {
-  if (interval === "15m") return dateStr.slice(11, 16);
-  if (interval === "year") return dateStr.slice(0, 4);
-  if (interval === "month") return dateStr.slice(0, 7);
-  return dateStr.slice(5, 10);
-}
-
-function tickFmt(v: number): string {
-  if (v >= 1_000_000) return (v / 1_000_000).toFixed(1) + "M";
-  if (v >= 1_000) return (v / 1_000).toFixed(0) + "K";
-  return v.toString();
-}
-
-function makeCandleShape(minP: number, maxP: number) {
-  return function CandleShape(props: {
-    x?: number; width?: number;
-    open?: number; high?: number; low?: number; close?: number;
-    background?: { x: number; y: number; width: number; height: number };
-  }) {
-    const { x = 0, width = 0, background, open, high, low, close } = props;
-    if (!background || open == null || high == null || low == null || close == null) return null;
-    const range = maxP - minP;
-    if (range === 0 || background.height === 0) return null;
-
-    const toY = (price: number) =>
-      background.y + ((maxP - price) / range) * background.height;
-
-    const highY  = toY(high);
-    const lowY   = toY(low);
-    const openY  = toY(open);
-    const closeY = toY(close);
-
-    const isUp    = close >= open;
-    const color   = isUp ? "#34D399" : "#F87171";
-    const bodyTop = Math.min(openY, closeY);
-    const bodyH   = Math.max(1, Math.abs(closeY - openY));
-    const cx      = x + width / 2;
-    const bodyW   = Math.max(2, width - 2);
-
-    return (
-      <g>
-        <line x1={cx} y1={highY} x2={cx} y2={lowY} stroke={color} strokeWidth={1} />
-        <rect x={cx - bodyW / 2} y={bodyTop} width={bodyW} height={bodyH}
-          fill={color} stroke={color} strokeWidth={0.5} />
-      </g>
-    );
-  };
-}
-
 const CHART_SETTINGS_KEY = "richbot-chart-settings";
+
 type ChartSettings = {
   interval: ChartInterval;
   chartType: "line" | "candle";
   activePreset: string;
   visibleMAs: string[];
 };
-function loadChartSettings(): Partial<ChartSettings> {
+
+function loadSettings(): Partial<ChartSettings> {
   if (typeof window === "undefined") return {};
   try { return JSON.parse(localStorage.getItem(CHART_SETTINGS_KEY) ?? "{}") ?? {}; }
   catch { return {}; }
 }
-function saveChartSettings(s: ChartSettings) {
+function saveSettings(s: ChartSettings) {
   try { localStorage.setItem(CHART_SETTINGS_KEY, JSON.stringify(s)); } catch {}
 }
 
-export default function PriceChart({ ticker, height = 320 }: Props) {
-  const [interval, setActiveInterval] = useState<ChartInterval>(() => {
-    const s = loadChartSettings();
-    return s.interval ?? "day";
-  });
-  const [brushRange, setBrushRange]   = useState<[number, number] | null>(null);
-  const [activePreset, setActivePreset] = useState<string>(() => {
-    const s = loadChartSettings();
-    return s.activePreset ?? "6M";
-  });
-  const [chartType, setChartType]     = useState<"line" | "candle">(() => {
-    const s = loadChartSettings();
-    return s.chartType ?? "line";
-  });
-  const [visibleMAs, setVisibleMAs]   = useState<Set<string>>(() => {
-    const s = loadChartSettings();
-    return new Set<string>(s.visibleMAs ?? MA_LINES.map((m) => m.key));
-  });
-  const chartContainerRef = useRef<HTMLDivElement>(null);
+function toTime(dateStr: string, interval: ChartInterval): Time {
+  if (interval === "15m") {
+    return Math.floor(new Date(dateStr).getTime() / 1000) as UTCTimestamp;
+  }
+  const d =
+    dateStr.length === 4 ? `${dateStr}-01-01` :
+    dateStr.length === 7 ? `${dateStr}-01`    :
+    dateStr.slice(0, 10);
+  return d as Time;
+}
+
+function getMAValue(p: PriceSnapshot, key: string): number | undefined {
+  const v = (p as unknown as Record<string, unknown>)[key];
+  return typeof v === "number" ? v : undefined;
+}
+
+export default function PriceChart({ ticker, height = 400 }: Props) {
+  const s = loadSettings();
+
+  const [interval, setInterval_] = useState<ChartInterval>(s.interval ?? "day");
+  const [chartType, setChartType] = useState<"line" | "candle">(s.chartType ?? "candle");
+  const [activePreset, setActivePreset] = useState(s.activePreset ?? "6M");
+  const [visibleMAs, setVisibleMAs] = useState<Set<string>>(
+    new Set(s.visibleMAs ?? MA_LINES.map((m) => m.key))
+  );
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const chartRef  = useRef<IChartApi | null>(null);
+  const candleRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const lineRef   = useRef<ISeriesApi<"Line"> | null>(null);
+  const volRef    = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const maRefs    = useRef<Map<string, ISeriesApi<SeriesType>>>(new Map());
 
   const { data: history = [], isLoading } = useChartData(ticker, interval);
 
-  const chartData: ChartRow[] = history.map((p) => ({
-    date:   formatDate(p.date, interval),
-    open:   p.open   ?? undefined,
-    high:   p.high   ?? undefined,
-    low:    p.low    ?? undefined,
-    close:  p.close,
-    volume: p.volume,
-    MA20:   p.ma20   ?? undefined,
-    MA50:   p.ma50   ?? undefined,
-    MA60:   p.ma60   ?? undefined,
-    MA120:  p.ma120  ?? undefined,
-    MA200:  p.ma200  ?? undefined,
-    MA240:  p.ma240  ?? undefined,
-  }));
-
-  // 데이터 로드 완료 시 기본 프리셋(6M) 적용
+  // ── 차트 초기화 (마운트 1회) ────────────────────────────────────────────
   useEffect(() => {
-    if (chartData.length === 0) return;
-    const preset = PRESETS.find((p) => p.key === activePreset);
-    if (!preset || preset.count === null) {
-      setBrushRange(null);
-      return;
-    }
-    const count = Math.min(preset.count, chartData.length);
-    setBrushRange([chartData.length - count, chartData.length - 1]);
+    if (!containerRef.current) return;
+
+    const chart = createChart(containerRef.current, {
+      layout: {
+        background: { type: ColorType.Solid, color: "#131722" },
+        textColor: "#B2B5BE",
+        fontSize: 11,
+      },
+      grid: {
+        vertLines: { color: "#1E2029", style: LineStyle.Solid },
+        horzLines: { color: "#1E2029", style: LineStyle.Solid },
+      },
+      crosshair: { mode: CrosshairMode.Normal },
+      rightPriceScale: { borderColor: "#2B2B43" },
+      timeScale: {
+        borderColor: "#2B2B43",
+        timeVisible: false,
+        secondsVisible: false,
+      },
+      width: containerRef.current.offsetWidth,
+      height,
+    });
+    chartRef.current = chart;
+
+    // 거래량 (하단 약 15%)
+    const vol = chart.addSeries(HistogramSeries, {
+      priceFormat: { type: "volume" },
+      priceScaleId: "vol",
+    });
+    chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
+    volRef.current = vol;
+
+    // 캔들 시리즈
+    const candle = chart.addSeries(CandlestickSeries, {
+      upColor: "#26a69a",
+      downColor: "#ef5350",
+      borderUpColor: "#26a69a",
+      borderDownColor: "#ef5350",
+      wickUpColor: "#26a69a",
+      wickDownColor: "#ef5350",
+    });
+    candleRef.current = candle;
+
+    // 라인 시리즈 (기본 숨김)
+    const line = chart.addSeries(LineSeries, {
+      color: "#2962FF",
+      lineWidth: 2,
+      priceLineVisible: false,
+      visible: false,
+    });
+    lineRef.current = line;
+
+    // MA 시리즈
+    MA_LINES.forEach(({ key, color }) => {
+      const ma = chart.addSeries(LineSeries, {
+        color,
+        lineWidth: 1,
+        lineStyle: LineStyle.Solid,
+        priceLineVisible: false,
+        lastValueVisible: false,
+      });
+      maRefs.current.set(key, ma);
+    });
+
+    // 리사이즈 대응
+    const ro = new ResizeObserver(() => {
+      if (containerRef.current) chart.resize(containerRef.current.offsetWidth, height);
+    });
+    ro.observe(containerRef.current);
+
+    return () => {
+      ro.disconnect();
+      chart.remove();
+      chartRef.current = null;
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chartData.length, interval]);
-
-  const startIdx = brushRange?.[0] ?? 0;
-  const endIdx   = brushRange?.[1] ?? Math.max(0, chartData.length - 1);
-
-  const visibleSlice = chartData.slice(startIdx, endIdx + 1);
-  const allVisiblePrices = visibleSlice.flatMap((d) => {
-    const maVals = MA_LINES
-      .filter(({ key }) => visibleMAs.has(key))
-      .map(({ key }) => d[key as keyof ChartRow] as number | undefined);
-    const ohlc = chartType === "candle" ? [d.high, d.low] : [d.close];
-    return ([...ohlc, ...maVals] as (number | undefined)[]).filter(
-      (v): v is number => typeof v === "number" && !isNaN(v)
-    );
-  });
-  const minP = allVisiblePrices.length ? Math.min(...allVisiblePrices) * 0.98 : 0;
-  const maxP = allVisiblePrices.length ? Math.max(...allVisiblePrices) * 1.02 : 100;
-
-  const handleInterval = useCallback((v: ChartInterval) => {
-    setActiveInterval(v);
-    setBrushRange(null);
-    setActivePreset("6M");
   }, []);
 
-  const applyPreset = useCallback((key: string, count: number | null) => {
-    setActivePreset(key);
-    if (count === null) {
-      setBrushRange(null);
-      return;
-    }
-    // chartData.length는 렌더 시점 값 — 최신값 직접 읽기
-    setBrushRange((prev) => {
-      void prev;
-      return null; // 아래 useEffect로 재계산
+  // 15분봉 전환 시 timeVisible 업데이트
+  useEffect(() => {
+    chartRef.current?.timeScale().applyOptions({ timeVisible: interval === "15m" });
+  }, [interval]);
+
+  // ── 데이터 업데이트 ─────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!history.length || !chartRef.current) return;
+
+    // 캔들
+    const candleData = history
+      .filter((p) => p.open != null && p.high != null && p.low != null)
+      .map((p) => ({
+        time:  toTime(p.date, interval),
+        open:  p.open!,
+        high:  p.high!,
+        low:   p.low!,
+        close: p.close,
+      }));
+    candleRef.current?.setData(candleData);
+
+    // 라인
+    lineRef.current?.setData(
+      history.map((p) => ({ time: toTime(p.date, interval), value: p.close }))
+    );
+
+    // 거래량 (상승=초록, 하락=빨강)
+    volRef.current?.setData(
+      history.map((p) => ({
+        time:  toTime(p.date, interval),
+        value: p.volume,
+        color: p.close >= (p.open ?? p.close)
+          ? "rgba(38,166,154,0.5)"
+          : "rgba(239,83,80,0.5)",
+      }))
+    );
+
+    // MA
+    MA_LINES.forEach(({ key }) => {
+      const maSeries = maRefs.current.get(key);
+      if (!maSeries) return;
+      const maData = history
+        .filter((p) => getMAValue(p, key) != null)
+        .map((p) => ({ time: toTime(p.date, interval), value: getMAValue(p, key)! }));
+      (maSeries as ISeriesApi<"Line">).setData(maData);
     });
-    // count를 ref로 넘겨 useEffect에서 처리하는 대신 직접 계산
-    // chartData는 렌더 스코프 변수라 여기서 사용 가능
-    const len = history.length;
-    if (len === 0) return;
-    const n = Math.min(count, len);
-    setBrushRange([len - n, len - 1]);
+
+    // 프리셋 범위 복원
+    applyPresetRange(activePreset, history);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [history.length]);
+  }, [history, interval]);
+
+  // ── 차트 타입 전환 ──────────────────────────────────────────────────────
+  useEffect(() => {
+    candleRef.current?.applyOptions({ visible: chartType === "candle" });
+    lineRef.current?.applyOptions({ visible: chartType === "line" });
+  }, [chartType]);
+
+  // ── MA 표시/숨김 ────────────────────────────────────────────────────────
+  useEffect(() => {
+    MA_LINES.forEach(({ key }) => {
+      maRefs.current.get(key)?.applyOptions({ visible: visibleMAs.has(key) });
+    });
+  }, [visibleMAs]);
+
+  // ── 설정 저장 ───────────────────────────────────────────────────────────
+  useEffect(() => {
+    saveSettings({ interval, chartType, activePreset, visibleMAs: [...visibleMAs] });
+  }, [interval, chartType, activePreset, visibleMAs]);
+
+  // ── 프리셋 범위 적용 ────────────────────────────────────────────────────
+  const applyPresetRange = useCallback(
+    (key: string, data: PriceSnapshot[]) => {
+      if (!chartRef.current || !data.length) return;
+      if (key === "all") {
+        chartRef.current.timeScale().fitContent();
+        return;
+      }
+      const preset = PRESETS.find((p) => p.key === key);
+      if (!preset) return;
+      const lastDate = new Date(data[data.length - 1].date);
+      const fromDate = new Date(lastDate);
+      fromDate.setMonth(fromDate.getMonth() - preset.months);
+      chartRef.current.timeScale().setVisibleRange({
+        from: toTime(fromDate.toISOString().slice(0, 10), interval),
+        to:   toTime(lastDate.toISOString().slice(0, 10), interval),
+      });
+    },
+    [interval]
+  );
+
+  const handlePreset = useCallback(
+    (key: string) => {
+      setActivePreset(key);
+      applyPresetRange(key, history);
+    },
+    [applyPresetRange, history]
+  );
+
+  const handleInterval = useCallback((v: ChartInterval) => {
+    setInterval_(v);
+    setActivePreset("6M");
+  }, []);
 
   const toggleMA = useCallback((key: string) => {
     setVisibleMAs((prev) => {
       const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
+      next.has(key) ? next.delete(key) : next.add(key);
       return next;
     });
   }, []);
 
-  const zoomIn = useCallback(() => {
-    setActivePreset("");
-    const s = startIdx, e = endIdx, span = e - s;
-    if (span <= 10) return;
-    const q = Math.floor(span / 4);
-    setBrushRange([s + q, e - q]);
-  }, [startIdx, endIdx]);
-
-  const zoomOut = useCallback(() => {
-    setActivePreset("");
-    const s = startIdx, e = endIdx, span = e - s;
-    const q = Math.floor(span / 2);
-    setBrushRange([Math.max(0, s - q), Math.min(chartData.length - 1, e + q)]);
-  }, [startIdx, endIdx, chartData.length]);
-
-  const resetZoom = useCallback(() => {
-    setActivePreset("전체");
-    setBrushRange(null);
+  const fitAll = useCallback(() => {
+    setActivePreset("all");
+    chartRef.current?.timeScale().fitContent();
   }, []);
-
-  const zoomInRef   = useRef(zoomIn);
-  const zoomOutRef  = useRef(zoomOut);
-  const startIdxRef = useRef(startIdx);
-  const endIdxRef   = useRef(endIdx);
-  const chartLenRef = useRef(chartData.length);
-  useEffect(() => { zoomInRef.current   = zoomIn;           }, [zoomIn]);
-  useEffect(() => { zoomOutRef.current  = zoomOut;          }, [zoomOut]);
-  useEffect(() => { startIdxRef.current = startIdx;         }, [startIdx]);
-  useEffect(() => { endIdxRef.current   = endIdx;           }, [endIdx]);
-  useEffect(() => { chartLenRef.current = chartData.length; }, [chartData.length]);
-
-  useEffect(() => {
-    const el = chartContainerRef.current;
-    if (!el) return;
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      if (e.deltaY < 0) zoomInRef.current();
-      else zoomOutRef.current();
-    };
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
-  }, []);
-
-  useEffect(() => {
-    const el = chartContainerRef.current;
-    if (!el) return;
-    const drag = { active: false, startX: 0, startS: 0, startE: 0 };
-    const beginDrag = (clientX: number, clientY: number) => {
-      const rect = el.getBoundingClientRect();
-      if (clientY > rect.bottom - 10) return;
-      drag.active = true; drag.startX = clientX;
-      drag.startS = startIdxRef.current; drag.startE = endIdxRef.current;
-      el.style.cursor = "grabbing";
-    };
-    const moveDrag = (clientX: number) => {
-      if (!drag.active) return;
-      setActivePreset("");
-      const visibleCount = drag.startE - drag.startS + 1;
-      const pxPerBar = (el.offsetWidth || 600) / visibleCount;
-      const shift = Math.round(-(clientX - drag.startX) / pxPerBar);
-      const len = chartLenRef.current;
-      const newS = Math.max(0, Math.min(len - visibleCount, drag.startS + shift));
-      setBrushRange([newS, newS + visibleCount - 1]);
-    };
-    const endDrag = () => { if (!drag.active) return; drag.active = false; el.style.cursor = "grab"; };
-    const onMouseDown  = (e: MouseEvent)  => beginDrag(e.clientX, e.clientY);
-    const onMouseMove  = (e: MouseEvent)  => moveDrag(e.clientX);
-    const onMouseUp    = ()               => endDrag();
-    const onTouchStart = (e: TouchEvent)  => beginDrag(e.touches[0].clientX, e.touches[0].clientY);
-    const onTouchMove  = (e: TouchEvent)  => { e.preventDefault(); moveDrag(e.touches[0].clientX); };
-    const onTouchEnd   = ()               => endDrag();
-    el.addEventListener("mousedown",  onMouseDown);
-    el.addEventListener("touchstart", onTouchStart, { passive: true });
-    el.addEventListener("touchmove",  onTouchMove,  { passive: false });
-    el.addEventListener("touchend",   onTouchEnd);
-    window.addEventListener("mousemove", onMouseMove);
-    window.addEventListener("mouseup",   onMouseUp);
-    el.style.cursor = "grab";
-    return () => {
-      el.removeEventListener("mousedown",  onMouseDown);
-      el.removeEventListener("touchstart", onTouchStart);
-      el.removeEventListener("touchmove",  onTouchMove);
-      el.removeEventListener("touchend",   onTouchEnd);
-      window.removeEventListener("mousemove", onMouseMove);
-      window.removeEventListener("mouseup",   onMouseUp);
-    };
-  }, []);
-
-  // 설정 변경 시 localStorage에 저장
-  useEffect(() => {
-    saveChartSettings({ interval, chartType, activePreset, visibleMAs: [...visibleMAs] });
-  }, [interval, chartType, activePreset, visibleMAs]);
-
-  const CandleShape = makeCandleShape(minP, maxP);
 
   return (
     <div className="space-y-2">
-      {/* 1행: 봉 종류 | 차트 타입 + 줌 */}
+      {/* 컨트롤 1행: 봉 종류 | 차트 타입 + 전체보기 */}
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex gap-1">
           {INTERVALS.map(({ label, value }) => (
@@ -335,41 +319,37 @@ export default function PriceChart({ ticker, height = 320 }: Props) {
 
         <div className="flex items-center gap-2">
           <div className="flex rounded overflow-hidden border border-gray-600">
-            <button
-              onClick={() => setChartType("line")}
-              className={`px-2.5 py-0.5 text-xs transition-colors ${
-                chartType === "line"
-                  ? "bg-blue-600 text-white"
-                  : "bg-gray-700 text-gray-300 hover:bg-gray-600"
-              }`}
-            >
-              라인
-            </button>
-            <button
-              onClick={() => setChartType("candle")}
-              className={`px-2.5 py-0.5 text-xs transition-colors ${
-                chartType === "candle"
-                  ? "bg-blue-600 text-white"
-                  : "bg-gray-700 text-gray-300 hover:bg-gray-600"
-              }`}
-            >
-              캔들
-            </button>
+            {(["line", "candle"] as const).map((t) => (
+              <button
+                key={t}
+                onClick={() => setChartType(t)}
+                className={`px-2.5 py-0.5 text-xs transition-colors ${
+                  chartType === t
+                    ? "bg-blue-600 text-white"
+                    : "bg-gray-700 text-gray-300 hover:bg-gray-600"
+                }`}
+              >
+                {t === "line" ? "라인" : "캔들"}
+              </button>
+            ))}
           </div>
-          <button onClick={zoomIn}    className="px-2 py-0.5 text-xs bg-gray-700 text-gray-300 hover:bg-gray-600 rounded" title="확대">+</button>
-          <button onClick={zoomOut}   className="px-2 py-0.5 text-xs bg-gray-700 text-gray-300 hover:bg-gray-600 rounded" title="축소">−</button>
-          <button onClick={resetZoom} className="px-2 py-0.5 text-xs bg-gray-700 text-gray-300 hover:bg-gray-600 rounded" title="전체">↺</button>
+          <button
+            onClick={fitAll}
+            className="px-2 py-0.5 text-xs bg-gray-700 text-gray-300 hover:bg-gray-600 rounded"
+            title="전체 보기"
+          >
+            ↺
+          </button>
         </div>
       </div>
 
-      {/* 2행: 기간 프리셋 | 이평선 토글 */}
+      {/* 컨트롤 2행: 기간 프리셋 | 이평선 토글 */}
       <div className="flex items-center justify-between flex-wrap gap-2">
-        {/* 기간 프리셋 */}
         <div className="flex gap-1">
-          {PRESETS.map(({ label, key, count }) => (
+          {PRESETS.map(({ label, key }) => (
             <button
               key={key}
-              onClick={() => applyPreset(key, count)}
+              onClick={() => handlePreset(key)}
               className={`px-2.5 py-0.5 text-xs rounded font-medium transition-colors ${
                 activePreset === key
                   ? "bg-indigo-600 text-white"
@@ -381,9 +361,8 @@ export default function PriceChart({ ticker, height = 320 }: Props) {
           ))}
         </div>
 
-        {/* 이평선 토글 */}
         <div className="flex flex-wrap gap-1">
-          {MA_LINES.map(({ key, color, name }) => {
+          {MA_LINES.map(({ key, color, label }) => {
             const on = visibleMAs.has(key);
             return (
               <button
@@ -399,7 +378,7 @@ export default function PriceChart({ ticker, height = 320 }: Props) {
                   className="inline-block w-2 h-2 rounded-sm flex-shrink-0"
                   style={{ backgroundColor: on ? color : "#4B5563" }}
                 />
-                {name}
+                {label}
               </button>
             );
           })}
@@ -407,81 +386,14 @@ export default function PriceChart({ ticker, height = 320 }: Props) {
       </div>
 
       {isLoading ? (
-        <div className="h-52 flex items-center justify-center text-gray-400 text-sm">차트 로딩 중...</div>
-      ) : chartData.length === 0 ? (
-        <div className="h-20 flex items-center justify-center text-gray-500 text-sm">가격 데이터 없음</div>
-      ) : (
-        <div ref={chartContainerRef} style={{ touchAction: "none", userSelect: "none" }}>
-          <ResponsiveContainer width="100%" height={height}>
-            <ComposedChart data={visibleSlice} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-              <XAxis dataKey="date" tick={{ fill: "#9CA3AF", fontSize: 10 }} interval="preserveStartEnd" />
-              <YAxis
-                yAxisId="price"
-                domain={[minP, maxP]}
-                tick={{ fill: "#9CA3AF", fontSize: 10 }}
-                tickFormatter={tickFmt}
-                width={56}
-              />
-              <YAxis
-                yAxisId="vol"
-                orientation="right"
-                tick={{ fill: "#6B7280", fontSize: 9 }}
-                tickFormatter={(v: number) =>
-                  v >= 1_000_000 ? (v / 1_000_000).toFixed(0) + "M" : (v / 1_000).toFixed(0) + "K"
-                }
-                width={44}
-              />
-              <Tooltip
-                contentStyle={{ backgroundColor: "#1F2937", border: "1px solid #374151", borderRadius: 8 }}
-                labelStyle={{ color: "#F9FAFB" }}
-                formatter={(value: unknown) =>
-                  typeof value === "number" ? value.toLocaleString() : String(value)
-                }
-              />
-              <Legend wrapperStyle={{ color: "#9CA3AF", fontSize: 10 }} />
-
-              <Bar yAxisId="vol" dataKey="volume" fill="#4B5563" opacity={0.35} name="거래량" />
-
-              {chartType === "line" && (
-                <Line
-                  yAxisId="price"
-                  type="monotone"
-                  dataKey="close"
-                  stroke="#60A5FA"
-                  dot={false}
-                  strokeWidth={2}
-                  name="종가"
-                />
-              )}
-
-              {chartType === "candle" && (
-                <Bar
-                  yAxisId="price"
-                  dataKey="close"
-                  name="캔들"
-                  shape={<CandleShape />}
-                  isAnimationActive={false}
-                />
-              )}
-
-              {MA_LINES.filter(({ key }) => visibleMAs.has(key)).map(({ key, color, name }) => (
-                <Line
-                  key={key}
-                  yAxisId="price"
-                  type="monotone"
-                  dataKey={key}
-                  stroke={color}
-                  dot={false}
-                  strokeWidth={1.5}
-                  strokeDasharray="4 2"
-                  name={name}
-                  connectNulls={false}
-                />
-              ))}
-            </ComposedChart>
-          </ResponsiveContainer>
+        <div
+          className="flex items-center justify-center text-gray-400 text-sm"
+          style={{ height }}
+        >
+          차트 로딩 중...
         </div>
+      ) : (
+        <div ref={containerRef} style={{ height }} />
       )}
     </div>
   );
