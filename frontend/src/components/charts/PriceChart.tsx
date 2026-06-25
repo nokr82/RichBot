@@ -385,16 +385,18 @@ export default function PriceChart({ ticker, height = 400 }: Props) {
         </div>
       </div>
 
-      {isLoading ? (
-        <div
-          className="flex items-center justify-center text-gray-400 text-sm"
-          style={{ height }}
-        >
-          차트 로딩 중...
-        </div>
-      ) : (
+      <div style={{ position: "relative" }}>
         <div ref={containerRef} style={{ height }} />
-      )}
+        {isLoading && (
+          <div
+            className="absolute inset-0 flex items-center justify-center text-gray-400 text-sm"
+            style={{ height }}
+          >
+            차트 로딩 중...
+          </div>
+        )}
+      </div>
     </div>
   );
 }
+

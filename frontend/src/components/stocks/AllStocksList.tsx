@@ -254,40 +254,77 @@ function StockDetailPanel({
   );
 }
 
+import { useEffect, useRef } from "react";
 import {
-  ComposedChart, Line, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, Legend, ResponsiveContainer,
-} from "recharts";
+  createChart, ColorType, CrosshairMode, LineStyle,
+  LineSeries, HistogramSeries,
+  type IChartApi, type ISeriesApi, type SeriesType, type Time,
+} from "lightweight-charts";
 
 function LivePriceChart({ history }: { history: PriceSnapshot[] }) {
-  const chartData = history.map((p) => ({
-    date: p.date.slice(5, 10),
-    close: p.close,
-    volume: p.volume,
-    MA20: p.ma20 ?? undefined,
-    MA60: p.ma60 ?? undefined,
-    MA120: p.ma120 ?? undefined,
-  }));
-  const prices = history.map((p) => p.close);
-  const minP = Math.min(...prices) * 0.98;
-  const maxP = Math.max(...prices) * 1.02;
+  const containerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const lineRef  = useRef<ISeriesApi<"Line"> | null>(null);
+  const volRef   = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const maRefs   = useRef<Map<string, ISeriesApi<SeriesType>>>(new Map());
 
-  return (
-    <ResponsiveContainer width="100%" height={220}>
-      <ComposedChart data={chartData} margin={{ top: 4, right: 4, bottom: 4, left: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-        <XAxis dataKey="date" tick={{ fill: "#9CA3AF", fontSize: 10 }} interval="preserveStartEnd" />
-        <YAxis domain={[minP, maxP]} tick={{ fill: "#9CA3AF", fontSize: 10 }}
-          tickFormatter={(v: number) => (v / 1000).toFixed(0) + "K"} />
-        <Tooltip contentStyle={{ backgroundColor: "#1F2937", border: "1px solid #374151", borderRadius: 8 }}
-          labelStyle={{ color: "#F9FAFB" }} />
-        <Legend wrapperStyle={{ color: "#9CA3AF", fontSize: 11 }} />
-        <Bar dataKey="volume" fill="#4B5563" opacity={0.4} name="거래량" />
-        <Line type="monotone" dataKey="close" stroke="#60A5FA" dot={false} strokeWidth={2} name="종가" />
-        <Line type="monotone" dataKey="MA20"  stroke="#F59E0B" dot={false} strokeWidth={1.5} strokeDasharray="4 2" name="MA20" />
-        <Line type="monotone" dataKey="MA60"  stroke="#34D399" dot={false} strokeWidth={1.5} strokeDasharray="4 2" name="MA60" />
-        <Line type="monotone" dataKey="MA120" stroke="#22D3EE" dot={false} strokeWidth={1.5} strokeDasharray="4 2" name="MA120" />
-      </ComposedChart>
-    </ResponsiveContainer>
-  );
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const chart = createChart(containerRef.current, {
+      layout: { background: { type: ColorType.Solid, color: "#131722" }, textColor: "#B2B5BE", fontSize: 10 },
+      grid: { vertLines: { color: "#1E2029", style: LineStyle.Solid }, horzLines: { color: "#1E2029", style: LineStyle.Solid } },
+      crosshair: { mode: CrosshairMode.Normal },
+      rightPriceScale: { borderColor: "#2B2B43" },
+      timeScale: { borderColor: "#2B2B43", timeVisible: false },
+      width: containerRef.current.offsetWidth,
+      height: 220,
+    });
+    chartRef.current = chart;
+
+    const vol = chart.addSeries(HistogramSeries, { priceFormat: { type: "volume" }, priceScaleId: "vol" });
+    chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
+    volRef.current = vol;
+
+    lineRef.current = chart.addSeries(LineSeries, { color: "#60A5FA", lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
+
+    const maConfig = [
+      { key: "ma20",  color: "#F59E0B" },
+      { key: "ma60",  color: "#34D399" },
+      { key: "ma120", color: "#22D3EE" },
+    ];
+    maConfig.forEach(({ key, color }) => {
+      const s = chart.addSeries(LineSeries, { color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+      maRefs.current.set(key, s);
+    });
+
+    const ro = new ResizeObserver(() => {
+      if (containerRef.current) chart.resize(containerRef.current.offsetWidth, 220);
+    });
+    ro.observe(containerRef.current);
+    return () => { ro.disconnect(); chart.remove(); chartRef.current = null; };
+  }, []);
+
+  useEffect(() => {
+    if (!history.length || !chartRef.current) return;
+    const toTime = (d: string) => d.slice(0, 10) as Time;
+
+    lineRef.current?.setData(history.map((p) => ({ time: toTime(p.date), value: p.close })));
+    volRef.current?.setData(history.map((p) => ({
+      time: toTime(p.date), value: p.volume,
+      color: p.close >= (p.open ?? p.close) ? "rgba(38,166,154,0.5)" : "rgba(239,83,80,0.5)",
+    })));
+
+    const maKeys = ["ma20", "ma60", "ma120"] as const;
+    maKeys.forEach((key) => {
+      const s = maRefs.current.get(key);
+      if (!s) return;
+      const d = history.filter((p) => p[key] != null).map((p) => ({ time: toTime(p.date), value: p[key]! }));
+      (s as ISeriesApi<"Line">).setData(d);
+    });
+
+    chartRef.current.timeScale().fitContent();
+  }, [history]);
+
+  return <div ref={containerRef} style={{ height: 220 }} />;
 }
+
